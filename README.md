@@ -1,4 +1,4 @@
-# Diving Club Manager — Rust edition
+# Rusty Diving Club Manager 
 
 A Rust rewrite of the original locally hosted diving-club equipment and loan manager.
 
