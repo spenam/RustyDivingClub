@@ -4,7 +4,7 @@ services:
     environment:
       POSTGRES_DB: rustydivingclub
       POSTGRES_USER: club
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,12 +15,12 @@ services:
   app:
     build: .
     environment:
-      DATABASE_URL: postgres://club:${POSTGRES_PASSWORD:-change-me}@db:5432/rustydivingclub
+      DATABASE_URL: postgres://club:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/rustydivingclub
       HOST: 0.0.0.0
       PORT: 8080
-      RUST_LOG: info
+      RUST_LOG: warn
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       db:
         condition: service_healthy
