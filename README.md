@@ -1,6 +1,6 @@
 # Rusty Diving Club Manager 
 
-A Rust rewrite of the original locally hosted diving-club equipment and loan manager.
+A Rust rewrite of the original locally hosted rustydivingclub equipment and loan manager.
 
 ## Stack
 
