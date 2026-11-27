@@ -79,3 +79,30 @@ cargo fmt --check
 cargo test
 cargo clippy -- -D warnings
 ```
+
+## Member diving qualifications and dashboard
+
+The dashboard at `/` now includes a member directory, name/email search, a diving-level filter, and an add-member form. The supported qualification values are exactly `N1`, `PN1`, `N2`, `PN2`, `N3`, `PN3`, `N4`, `PN4`, `E1`, `E2`, `E3`, and `E4`. Existing members are left unassigned by the migration so that no qualification is guessed; choose their level in the directory to save it.
+
+Create a member with a level:
+
+```powershell
+$body = @{
+    full_name = "John Smith"
+    email = "john@example.com"
+    diving_level = "N2"
+} | ConvertTo-Json -Compress
+
+Invoke-RestMethod -Uri "http://localhost:8080/api/members" -Method Post -ContentType "application/json" -Body $body
+```
+
+Update an existing member's level using `PATCH /api/members/{id}` with JSON such as `{"diving_level":"PN2"}`. The dashboard performs this update when you change the level selector in a member's row.
+
+When updating an existing checkout, rebuild/restart the app so SQLx can apply migration `0002_member_diving_level.sql`:
+
+```powershell
+docker compose up --build -d
+docker compose logs -f app
+```
+
+The migration preserves existing member records and marks their qualification as unassigned until it is set in the UI.
