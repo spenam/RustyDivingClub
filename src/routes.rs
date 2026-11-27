@@ -4,238 +4,93 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
 use validator::Validate;
-
 use crate::{error::AppError, state::AppState};
 
-#[derive(Debug, Serialize, FromRow)]
-pub struct Equipment {
-    pub id: Uuid,
-    pub qr_uuid: Uuid,
-    pub category_id: Option<Uuid>,
-    pub name: String,
-    pub description: Option<String>,
-    pub serial_number: Option<String>,
-    pub status: String,
-    pub created_at: DateTime<Utc>,
-}
+const LEVELS: [&str;12] = ["N1","PN1","N2","PN2","N3","PN3","N4","PN4","E1","E2","E3","E4"];
+const EQ_SELECT: &str = "SELECT e.id,e.qr_uuid,e.category_id,c.name category_name,e.name,e.description,e.serial_number,e.status,e.condition_status,e.created_at,l.member_id current_member_id,m.full_name current_member_name,l.due_at FROM equipment e LEFT JOIN equipment_categories c ON c.id=e.category_id LEFT JOIN loans l ON l.equipment_id=e.id AND l.returned_at IS NULL LEFT JOIN members m ON m.id=l.member_id";
+const LOAN_SELECT: &str = "SELECT l.id,l.loan_group_id,l.equipment_id,e.name equipment_name,l.member_id,m.full_name member_name,l.checked_out_at,l.due_at,l.returned_at,l.notes FROM loans l JOIN equipment e ON e.id=l.equipment_id JOIN members m ON m.id=l.member_id";
 
-#[derive(Debug, Serialize, FromRow)]
-pub struct Member {
-    pub id: Uuid,
-    pub full_name: String,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub diving_level: Option<String>,
-    pub active: bool,
-    pub created_at: DateTime<Utc>,
-}
+#[derive(Debug,Serialize,FromRow)] pub struct Equipment { pub id:Uuid,pub qr_uuid:Uuid,pub category_id:Option<Uuid>,pub category_name:Option<String>,pub name:String,pub description:Option<String>,pub serial_number:Option<String>,pub status:String,pub condition_status:String,pub created_at:DateTime<Utc>,pub current_member_id:Option<Uuid>,pub current_member_name:Option<String>,pub due_at:Option<DateTime<Utc>> }
+#[derive(Debug,Serialize,FromRow)] pub struct Member { pub id:Uuid,pub full_name:String,pub email:Option<String>,pub phone:Option<String>,pub diving_level:Option<String>,pub active:bool,pub created_at:DateTime<Utc> }
+#[derive(Debug,Serialize,FromRow)] pub struct Loan { pub id:Uuid,pub loan_group_id:Uuid,pub equipment_id:Uuid,pub equipment_name:String,pub member_id:Uuid,pub member_name:String,pub checked_out_at:DateTime<Utc>,pub due_at:Option<DateTime<Utc>>,pub returned_at:Option<DateTime<Utc>>,pub notes:Option<String> }
+#[derive(Debug,Serialize,FromRow)] pub struct EquipmentEvent { pub id:Uuid,pub equipment_id:Uuid,pub loan_id:Option<Uuid>,pub event_type:String,pub from_state:Option<serde_json::Value>,pub to_state:Option<serde_json::Value>,pub comment:String,pub occurred_at:DateTime<Utc> }
+#[derive(Debug,Serialize,FromRow)] pub struct Category { pub id:Uuid,pub name:String,pub description:Option<String> }
+#[derive(Debug,Deserialize,Validate)] pub struct NewEquipment { #[validate(length(min=1,max=160))] pub name:String,pub category_id:Option<Uuid>,pub description:Option<String>,pub serial_number:Option<String>,pub comment:Option<String> }
+#[derive(Debug,Deserialize)] pub struct NewCategory { pub name:String,pub description:Option<String> }
+#[derive(Debug,Deserialize,Validate)] pub struct NewMember { #[validate(length(min=1,max=160))] pub full_name:String,pub email:Option<String>,pub phone:Option<String>,pub diving_level:String }
+#[derive(Debug,Deserialize)] pub struct UpdateMemberLevel { pub diving_level:String }
+#[derive(Debug,Deserialize)] pub struct CheckoutRequest { pub equipment_id:Option<Uuid>,pub equipment_ids:Option<Vec<Uuid>>,pub member_id:Uuid,pub due_at:Option<DateTime<Utc>>,pub notes:Option<String>,pub comment:Option<String> }
+#[derive(Debug,Deserialize,Default)] pub struct ReturnRequest { pub comment:Option<String>,pub condition_status:Option<String> }
+#[derive(Debug,Deserialize)] pub struct ConditionRequest { pub condition_status:String,pub comment:String }
+fn check_comment(c:&str)->Result<(),AppError>{if c.trim().is_empty(){return Err(AppError::BadRequest("A non-empty comment is required".into()))}if c.len()>2000{return Err(AppError::BadRequest("Comment must be at most 2000 characters".into()))}Ok(())}
 
-#[derive(Debug, Serialize, FromRow)]
-pub struct Loan {
-    pub id: Uuid,
-    pub equipment_id: Uuid,
-    pub equipment_name: String,
-    pub member_id: Uuid,
-    pub member_name: String,
-    pub checked_out_at: DateTime<Utc>,
-    pub due_at: Option<DateTime<Utc>>,
-    pub returned_at: Option<DateTime<Utc>>,
-    pub notes: Option<String>,
+pub async fn health()->Json<serde_json::Value>{Json(serde_json::json!({"status":"ok"}))}
+pub async fn dashboard(State(s):State<AppState>)->Result<Html<String>,AppError>{
+ let members:i64=sqlx::query_scalar("SELECT count(*) FROM members WHERE active=true").fetch_one(&s.db).await?;
+ let eq:i64=sqlx::query_scalar("SELECT count(*) FROM equipment").fetch_one(&s.db).await?;
+ let ready:i64=sqlx::query_scalar("SELECT count(*) FROM equipment WHERE status='available' AND condition_status='ready'").fetch_one(&s.db).await?;
+ let repair:i64=sqlx::query_scalar("SELECT count(*) FROM equipment WHERE condition_status='needs_repair'").fetch_one(&s.db).await?;
+ let loans:i64=sqlx::query_scalar("SELECT count(*) FROM loans WHERE returned_at IS NULL").fetch_one(&s.db).await?;
+ let levels=LEVELS.iter().map(|x|format!("<option>{x}</option>")).collect::<String>();
+ let html=r###"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diving Club Manager</title><style>
+:root{--bg:#071923;--p:#102936;--line:#254655;--txt:#edf7fa;--muted:#91abb7;--mint:#64e0c0;--warn:#ffc66d;--red:#ff8989}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 85% -10%,#174052 0,transparent 38%),var(--bg);color:var(--txt);font:14px/1.5 system-ui,sans-serif}.shell{max-width:1400px;margin:auto;padding:28px 22px 55px}.top,.head,.tools,.actions{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.top{margin-bottom:24px}.eyebrow{color:var(--mint);font-size:11px;letter-spacing:.15em;font-weight:800}h1{margin:3px 0;font-size:32px}h2{font-size:18px;margin:0}.muted{color:var(--muted)}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}.stat,.panel{background:linear-gradient(145deg,#153443,#0d232f);border:1px solid var(--line);border-radius:15px;padding:17px;box-shadow:0 10px 30px #0002}.stat strong{display:block;font-size:29px}.stat small{color:var(--muted)}.tabs{display:flex;gap:8px;margin-bottom:15px;flex-wrap:wrap}.tab,button{border:0;border-radius:9px;padding:10px 14px;background:var(--mint);color:#06232b;font-weight:800;cursor:pointer}.tab{background:#102936;color:#c5d8df;border:1px solid var(--line)}.tab.active{background:var(--mint);color:#06232b}.view{display:none}.view.active{display:block}.layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.8fr);gap:15px;align-items:start}.panel{margin-bottom:15px}.head{margin-bottom:14px}input,select,textarea{width:100%;min-width:0;background:#091f2a;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit}label{display:grid;gap:5px;color:#c4d7de;font-size:12px;flex:1;min-width:125px}.form{display:grid;gap:10px}.formrow{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th{text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em;padding:10px;border-bottom:1px solid var(--line)}td{padding:11px 9px;border-bottom:1px solid #24425088}.badge{display:inline-block;border-radius:7px;padding:3px 7px;font-size:11px;font-weight:800;background:#1b3b49}.good{background:#16483e;color:#8ef0d3}.bad{background:#55343a;color:#ffb0b0}.warn{background:#55472e;color:#ffdc9c}.secondary{background:#1b3b49;color:#d8e8ed;border:1px solid var(--line)}.notice{color:var(--mint);font-size:12px;min-height:18px}.empty{text-align:center;color:var(--muted);padding:25px}.checks{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;max-height:200px;overflow:auto}.check{display:flex;gap:7px;align-items:center;background:#091f2a;padding:8px;border-radius:8px}.check input{width:auto}.modal{display:none;position:fixed;inset:0;background:#000b;place-items:center;padding:16px}.modal.open{display:grid}.modalbox{background:#102936;border:1px solid var(--line);border-radius:15px;padding:20px;width:min(650px,100%);max-height:90vh;overflow:auto}.event{border-left:2px solid #4b9d8d;padding:0 0 13px 12px;margin-left:6px}.event strong{display:block}.small{font-size:11px}@media(max-width:900px){.layout{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}}@media(max-width:600px){.shell{padding:18px 12px}.stats{grid-template-columns:repeat(2,1fr)}}
+.export-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 18px;
+  border-radius: 9px;
+  background: var(--mint);
+  color: #06232b;
+  font-weight: 800;
+  text-decoration: none;
+  border: 1px solid var(--mint);
 }
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct NewEquipment {
-    #[validate(length(min = 1, max = 160))]
-    pub name: String,
-    pub category_id: Option<Uuid>,
-    pub description: Option<String>,
-    pub serial_number: Option<String>,
+.export-btn:hover {
+  background: #a0f5df;
+  transform: translateY(-1px);
 }
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct NewMember {
-    #[validate(length(min = 1, max = 160))]
-    pub full_name: String,
-    pub email: Option<String>,
-    pub phone: Option<String>,
-    pub diving_level: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateMemberLevel {
-    pub diving_level: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CheckoutRequest {
-    pub equipment_id: Uuid,
-    pub member_id: Uuid,
-    pub due_at: Option<DateTime<Utc>>,
-    pub notes: Option<String>,
-}
-
-pub async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok"}))
-}
-
-pub async fn dashboard(State(s): State<AppState>) -> Result<Html<String>, AppError> {
-    let equipment: i64 = sqlx::query_scalar("SELECT count(*) FROM equipment").fetch_one(&s.db).await?;
-    let available: i64 = sqlx::query_scalar("SELECT count(*) FROM equipment WHERE status = 'available'").fetch_one(&s.db).await?;
-    let members: i64 = sqlx::query_scalar("SELECT count(*) FROM members WHERE active = true").fetch_one(&s.db).await?;
-    let loans: i64 = sqlx::query_scalar("SELECT count(*) FROM loans WHERE returned_at IS NULL").fetch_one(&s.db).await?;
-    let html = r##"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diving Club Manager</title>
-<style>
-:root{--bg:#071923;--panel:#102936;--line:#254655;--text:#edf7fa;--muted:#91abb7;--mint:#64e0c0}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 85% -10%,#174052 0,transparent 38%),var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,sans-serif}.shell{max-width:1220px;margin:auto;padding:34px 26px 60px}.top{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:32px}.brand{display:flex;align-items:center;gap:13px}.logo{width:46px;height:46px;border-radius:15px;background:linear-gradient(145deg,#68e2c2,#3c9ec0);display:grid;place-items:center;color:#06222b;font-size:23px;font-weight:900}.eyebrow{font-size:11px;letter-spacing:.16em;color:var(--mint);font-weight:800}h1{font-size:clamp(25px,4vw,36px);line-height:1.1;margin:4px 0}.sub,.muted{color:var(--muted)}.sub{margin:0}.top-link{color:var(--mint);text-decoration:none;border:1px solid var(--line);padding:10px 14px;border-radius:11px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:26px}.stat,.panel{background:linear-gradient(145deg,#153443f5,#0d232ff5);border:1px solid var(--line);border-radius:18px;box-shadow:0 12px 35px #0002}.stat{padding:19px 20px}.stat-label{color:var(--muted);font-size:13px}.stat strong{display:block;font-size:32px;letter-spacing:-.04em;margin-top:5px}.stat:nth-child(2) strong{color:var(--mint)}.content{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,.8fr);gap:18px;align-items:start}.panel{padding:22px}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}h2{font-size:18px;margin:0}.tools{display:flex;gap:9px;flex-wrap:wrap}input,select{background:#091f2a;border:1px solid var(--line);border-radius:10px;color:var(--text);padding:11px 12px;font:inherit;min-width:0}input:focus,select:focus{outline:2px solid #64e0c066;border-color:var(--mint)}.search{width:min(230px,100%)}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.1em;padding:11px 10px;border-bottom:1px solid var(--line)}td{padding:14px 10px;border-bottom:1px solid #24425088}tbody tr:last-child td{border-bottom:0}.member-name{font-weight:700}.member-email{font-size:12px;color:var(--muted)}.level-select{background:#123e3d;border:1px solid #28675d;border-radius:9px;color:#8ef0d3;font-weight:800;font-size:12px;padding:6px 8px}.empty{padding:28px;text-align:center;color:var(--muted)}.form-grid{display:grid;gap:12px}label{display:grid;gap:6px;color:#c4d7de;font-size:13px}button{border:0;border-radius:10px;background:var(--mint);color:#06232b;font-weight:800;padding:12px 15px;font:inherit;cursor:pointer}button:hover{filter:brightness(1.06)}.notice{min-height:20px;color:var(--mint);font-size:13px}.level-guide{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.level-guide p{font-size:12px;color:var(--muted);margin:6px 0 10px}.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:11px;color:#bdd2da;background:#1a3a49;border-radius:7px;padding:4px 7px}@media(max-width:850px){.content{grid-template-columns:1fr}}@media(max-width:600px){.shell{padding:22px 15px}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.top{align-items:flex-start}.top-link{display:none}.panel{padding:16px}.panel-head{align-items:flex-start;flex-direction:column}.tools{width:100%}.search{width:100%}}
-</style></head><body><main class="shell"><header class="top"><div class="brand"><div class="logo">≈</div><div><div class="eyebrow">DIVING CLUB / OPERATIONS</div><h1>Diving Club Manager</h1><p class="sub">Your club, at a glance. Ready for the next dive.</p></div></div><a class="top-link" href="/api/loans">View loan API ↗</a></header>
-<section class="stats"><article class="stat"><div class="stat-label">Registered members</div><strong>{{MEMBERS}}</strong></article><article class="stat"><div class="stat-label">Equipment available</div><strong>{{AVAILABLE}}<span style="font-size:14px;color:var(--muted)"> / {{EQUIPMENT}}</span></strong></article><article class="stat"><div class="stat-label">Currently on loan</div><strong>{{LOANS}}</strong></article><article class="stat"><div class="stat-label">Equipment inventory</div><strong>{{EQUIPMENT}}</strong></article></section>
-<section class="content"><article class="panel"><div class="panel-head"><div><h2>Member directory</h2><div class="muted" style="font-size:13px">Manage members and their diving qualifications</div></div><div class="tools"><input id="search" class="search" type="search" placeholder="Search members…" aria-label="Search members"><select id="level-filter" aria-label="Filter by diving level"><option value="">All levels</option><option>N1</option><option>PN1</option><option>N2</option><option>PN2</option><option>N3</option><option>PN3</option><option>N4</option><option>PN4</option><option>E1</option><option>E2</option><option>E3</option><option>E4</option><option value="unassigned">Unassigned</option></select></div></div><div class="table-wrap"><table><thead><tr><th>Member</th><th>Diving level</th><th>Status</th></tr></thead><tbody id="members"><tr><td colspan="3" class="empty">Loading members…</td></tr></tbody></table></div><div id="member-count" class="muted" style="font-size:12px;margin-top:12px"></div></article>
-<aside class="panel"><div class="panel-head"><div><h2>Add a member</h2><div class="muted" style="font-size:13px">Create a club member profile</div></div></div><form id="member-form" class="form-grid"><label>Full name<input name="full_name" required maxlength="160" placeholder="e.g. Alex Martin"></label><label>Email address<input name="email" type="email" placeholder="alex@example.com"></label><label>Phone<input name="phone" type="tel" placeholder="Optional"></label><label>Diving level<select name="diving_level" required><option value="" disabled selected>Choose a level…</option><option>N1</option><option>PN1</option><option>N2</option><option>PN2</option><option>N3</option><option>PN3</option><option>N4</option><option>PN4</option><option>E1</option><option>E2</option><option>E3</option><option>E4</option></select></label><button type="submit">Add member</button><div id="form-notice" class="notice" role="status"></div></form><div class="level-guide"><strong style="font-size:13px">Available qualifications</strong><p>Choose the member's current qualification from the approved list.</p><div class="chips">{{LEVEL_CHIPS}}</div></div></aside></section></main>
+</style></head><body><main class="shell"><header class="top"><div><div class="eyebrow">DIVING CLUB / OPERATIONS</div><h1>Diving Club Manager</h1><div class="muted">Equipment, members and lending in one place.</div></div><a href="/api/export.xlsx" class="export-btn">
+↓ Export Excel backup </a>
+<span class="badge good">Local workspace</span></header>
+<section class="stats"><div class="stat"><small>Active members</small><strong>__MEMBERS__</strong></div><div class="stat"><small>Ready to borrow</small><strong>__READY__</strong></div><div class="stat"><small>Open item loans</small><strong>__LOANS__</strong></div><div class="stat"><small>Needs repair</small><strong>__REPAIR__</strong></div><div class="stat"><small>Total equipment</small><strong>__EQ__</strong></div></section>
+<nav class="tabs"><button class="tab active" data-view="equipment">Equipment</button><button class="tab" data-view="loans">Loans & returns</button><button class="tab" data-view="members">Members</button></nav>
+<section class="view active" id="equipment"><div class="layout"><article class="panel"><div class="head"><div><h2>Equipment inventory</h2><span class="muted small">Borrowing and condition are independent</span></div><div class="tools"><input id="eqsearch" placeholder="Search…" style="width:160px"><select id="eqfilter" style="width:150px"><option value="">All statuses</option><option value="available">Available</option><option value="checked_out">Borrowed</option><option value="needs_repair">Needs repair</option></select></div></div><div class="tablewrap"><table><thead><tr><th>Item</th><th>Category</th><th>Borrowing</th><th>Condition</th><th>Borrower</th><th></th></tr></thead><tbody id="eqrows"></tbody></table></div></article>
+<aside class="panel"><h2>Register equipment</h2><form id="eqform" class="form" style="margin-top:12px"><label>Name<input name="name" required></label><label>Category<select name="category_id" id="catselect"><option value="">No category</option></select></label><label>Serial number<input name="serial_number"></label><label>Description<textarea name="description" rows="2"></textarea></label><label>Comment<input name="comment" required value="New item registered"></label><button>Add equipment</button><div class="notice" id="eqnotice"></div></form><hr style="border:0;border-top:1px solid var(--line);margin:17px 0"><h2 style="font-size:15px">Add category</h2><form id="catform" class="formrow" style="margin-top:9px"><label>Name<input name="name" required placeholder="e.g. Regulators"></label><button>Add</button></form><div class="notice" id="catnotice"></div></aside></div></section>
+<section class="view" id="loans"><div class="layout"><article class="panel"><div class="head"><h2>Loan register</h2><select id="loanfilter" style="width:150px"><option value="open">Open loans</option><option value="all">All loans</option><option value="overdue">Overdue</option></select></div><div class="tablewrap"><table><thead><tr><th>Item</th><th>Member</th><th>Checked out</th><th>Due</th><th>Returned</th><th></th></tr></thead><tbody id="loanrows"></tbody></table></div></article><aside class="panel"><h2>Check out items</h2><form id="checkoutform" class="form" style="margin-top:12px"><label>Member<select name="member_id" id="memberselect" required><option value="">Choose member…</option></select></label><label>Items (select multiple)<div id="checkitems" class="checks"></div></label><label>Due date (optional)<input name="due_at" type="datetime-local"></label><label>Comment<input name="comment" required value="Equipment issued"></label><button>Check out selected items</button><div id="loannotice" class="notice"></div></form></aside></div></section>
+<section class="view" id="members"><div class="layout"><article class="panel"><div class="head"><h2>Member directory</h2><input id="msearch" placeholder="Search members…" style="max-width:190px"></div><div class="tablewrap"><table><thead><tr><th>Member</th><th>Level</th><th>Status</th></tr></thead><tbody id="mrows"></tbody></table></div></article><aside class="panel"><h2>Add member</h2><form id="mform" class="form" style="margin-top:12px"><label>Full name<input name="full_name" required></label><label>Email<input name="email" type="email"></label><label>Phone<input name="phone"></label><label>Diving level<select name="diving_level" required><option value="">Choose…</option>__LEVELS__</select></label><button>Add member</button><div class="notice" id="mnotice"></div></form></aside></div></section>
+</main><div class="modal" id="modal"><div class="modalbox"><div class="head"><h2 id="modtitle">Equipment history</h2><button class="secondary" id="close">Close</button></div><div id="modbody"></div></div></div>
 <script>
-const tbody=document.getElementById('members'),search=document.getElementById('search'),filter=document.getElementById('level-filter');let allMembers=[];
-function renderMembers(){const q=search.value.trim().toLocaleLowerCase(),level=filter.value;const rows=allMembers.filter(m=>(m.full_name+' '+(m.email||'')).toLocaleLowerCase().includes(q)&&(level===''||(level==='unassigned'?!m.diving_level:m.diving_level===level)));tbody.replaceChildren();if(!rows.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=3;td.className='empty';td.textContent=allMembers.length?'No members match these filters.':'No members yet. Add your first member using the form.';tr.append(td);tbody.append(tr)}for(const m of rows){const tr=document.createElement('tr'),name=document.createElement('td'),nm=document.createElement('div'),email=document.createElement('div'),lev=document.createElement('td'),status=document.createElement('td'),badge=document.createElement('select');nm.className='member-name';nm.textContent=m.full_name;email.className='member-email';email.textContent=m.email||'No email provided';name.append(nm,email);badge.className='level-select';badge.setAttribute('aria-label','Diving level for '+m.full_name);for(const level of ['N1','PN1','N2','PN2','N3','PN3','N4','PN4','E1','E2','E3','E4']){const opt=document.createElement('option');opt.value=level;opt.textContent=level;badge.append(opt)}if(m.diving_level){badge.value=m.diving_level}else{const opt=document.createElement('option');opt.value='';opt.textContent='Assign level…';opt.disabled=true;opt.selected=true;badge.prepend(opt)}badge.dataset.memberId=m.id;lev.append(badge);status.textContent=m.active?'Active':'Inactive';status.style.color=m.active?'var(--mint)':'var(--muted)';tr.append(name,lev,status);tbody.append(tr)}document.getElementById('member-count').textContent=rows.length+' of '+allMembers.length+' members'}
-async function loadMembers(){try{const r=await fetch('/api/members');if(!r.ok)throw new Error(await r.text());allMembers=await r.json();renderMembers()}catch(e){tbody.innerHTML='<tr><td colspan="3" class="empty">Could not load members. Check the server and refresh.</td></tr>';console.error(e)}}
-search.addEventListener('input',renderMembers);filter.addEventListener('change',renderMembers);tbody.addEventListener('change',async e=>{if(!e.target.matches('.level-select'))return;const select=e.target;try{const r=await fetch('/api/members/'+select.dataset.memberId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({diving_level:select.value})});if(!r.ok)throw new Error(await r.text());const updated=await r.json();const member=allMembers.find(m=>m.id===updated.id);if(member)member.diving_level=updated.diving_level;document.getElementById('form-notice').textContent='Diving level updated.'}catch(err){document.getElementById('form-notice').textContent='Could not update level: '+err.message;loadMembers()}});
-document.getElementById('member-form').addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),payload=Object.fromEntries(f.entries()),notice=document.getElementById('form-notice');for(const k of ['email','phone'])if(!payload[k])payload[k]=null;try{const r=await fetch('/api/members',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)throw new Error(await r.text());const member=await r.json();allMembers.unshift(member);renderMembers();e.currentTarget.reset();notice.textContent='Member added successfully.'}catch(err){notice.textContent='Could not add member: '+err.message}});loadMembers();
-</script></body></html>"##;
-    let levels = ["N1", "PN1", "N2", "PN2", "N3", "PN3", "N4", "PN4", "E1", "E2", "E3", "E4"];
-    let chips = levels.iter().map(|l| format!("<span class=\"chip\">{l}</span>")).collect::<String>();
-    let html = html.replace("{{MEMBERS}}", &members.to_string()).replace("{{AVAILABLE}}", &available.to_string()).replace("{{EQUIPMENT}}", &equipment.to_string()).replace("{{LOANS}}", &loans.to_string()).replace("{{LEVEL_CHIPS}}", &chips);
-    Ok(Html(html))
+const levels=['N1','PN1','N2','PN2','N3','PN3','N4','PN4','E1','E2','E3','E4'];let eq=[],mem=[],loans=[],cats=[];const $=x=>document.getElementById(x);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const dt=x=>x?new Date(x).toLocaleString():'—';async function api(url,o={}){let r=await fetch(url,{...o,headers:{'Content-Type':'application/json',...(o.headers||{})}});if(!r.ok)throw Error(await r.text());return r.status===204?null:r.json()}function msg(id,t){$(id).textContent=t}function borrow(s){return s==='checked_out'?'<span class="badge warn">Borrowed</span>':'<span class="badge good">Available</span>'}function cond(s){return s==='ready'?'<span class="badge good">Ready</span>':'<span class="badge bad">Needs repair</span>'}
+function renderEq(){let q=$('eqsearch').value.toLowerCase(),f=$('eqfilter').value;let a=eq.filter(x=>(x.name+' '+(x.serial_number||'')+' '+(x.category_name||'')).toLowerCase().includes(q));if(f==='needs_repair')a=a.filter(x=>x.condition_status===f);else if(f)a=a.filter(x=>x.status===f);$('eqrows').innerHTML=a.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted small">${esc(x.serial_number||'No serial')} · QR ${x.qr_uuid.slice(0,8)}</div></td><td>${esc(x.category_name||'—')}</td><td>${borrow(x.status)}</td><td>${cond(x.condition_status)}</td><td>${esc(x.current_member_name||'—')}<div class="muted small">${x.due_at?'Due '+dt(x.due_at):''}</div></td><td><button class="secondary" onclick="detail('${x.id}')">History</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">No equipment found.</td></tr>';let available=eq.filter(x=>x.status==='available'&&x.condition_status==='ready');$('checkitems').innerHTML=available.map(x=>`<label class="check"><input type="checkbox" name="equipment_ids" value="${x.id}">${esc(x.name)} <span class="muted small">${esc(x.serial_number||'')}</span></label>`).join('')||'<span class="muted small">No ready equipment available.</span>'}
+function renderMem(){let q=$('msearch').value.toLowerCase();$('mrows').innerHTML=mem.filter(x=>(x.full_name+' '+(x.email||'')).toLowerCase().includes(q)).map(x=>`<tr><td><b>${esc(x.full_name)}</b><div class="muted small">${esc(x.email||'')}</div></td><td><select class="lvl" data-id="${x.id}">${levels.map(l=>`<option ${x.diving_level===l?'selected':''}>${l}</option>`).join('')}</select></td><td>${x.active?'Active':'Inactive'}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">No members.</td></tr>'}
+function renderLoans(){let f=$('loanfilter').value,now=Date.now();let a=loans.filter(x=>f==='all'||(f==='open'&&!x.returned_at)||(f==='overdue'&&!x.returned_at&&x.due_at&&new Date(x.due_at).getTime()<now));$('loanrows').innerHTML=a.map(x=>`<tr><td>${esc(x.equipment_name)}<div class="muted small">Group ${x.loan_group_id.slice(0,8)}</div></td><td>${esc(x.member_name)}</td><td>${dt(x.checked_out_at)}</td><td>${dt(x.due_at)}${!x.returned_at&&x.due_at&&new Date(x.due_at)<new Date()?' <span class="badge bad">Overdue</span>':''}</td><td>${dt(x.returned_at)}</td><td>${x.returned_at?'':`<button onclick="returnItem('${x.id}')">Return</button>`}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No loans found.</td></tr>'}
+async function refresh(){[eq,mem,loans,cats]=await Promise.all([api('/api/equipment'),api('/api/members'),api('/api/loans'),api('/api/categories')]);renderEq();renderMem();renderLoans();$('catselect').innerHTML='<option value="">No category</option>'+cats.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');$('memberselect').innerHTML='<option value="">Choose member…</option>'+mem.filter(x=>x.active).map(x=>`<option value="${x.id}">${esc(x.full_name)} (${esc(x.diving_level||'No level')})</option>`).join('')}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.view).classList.add('active')});$('eqsearch').oninput=renderEq;$('eqfilter').onchange=renderEq;$('msearch').oninput=renderMem;$('loanfilter').onchange=renderLoans;
+$('eqform').onsubmit=async e=>{e.preventDefault();let p=Object.fromEntries(new FormData(e.target));p.category_id=p.category_id||null;p.description=p.description||null;p.serial_number=p.serial_number||null;try{await api('/api/equipment',{method:'POST',body:JSON.stringify(p)});e.target.reset();msg('eqnotice','Equipment registered.');await refresh()}catch(x){msg('eqnotice',x.message)}};
+$('catform').onsubmit=async e=>{e.preventDefault();try{await api('/api/categories',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});e.target.reset();msg('catnotice','Category added.');await refresh()}catch(x){msg('catnotice',x.message)}};
+$('mform').onsubmit=async e=>{e.preventDefault();let p=Object.fromEntries(new FormData(e.target));p.email=p.email||null;p.phone=p.phone||null;try{await api('/api/members',{method:'POST',body:JSON.stringify(p)});e.target.reset();msg('mnotice','Member added.');await refresh()}catch(x){msg('mnotice',x.message)}};
+$('mrows').onchange=async e=>{if(!e.target.matches('.lvl'))return;try{await api('/api/members/'+e.target.dataset.id,{method:'PATCH',body:JSON.stringify({diving_level:e.target.value})});let m=mem.find(x=>x.id===e.target.dataset.id);if(m)m.diving_level=e.target.value}catch(x){alert(x.message)}};
+$('checkoutform').onsubmit=async e=>{e.preventDefault();let f=new FormData(e.target),ids=f.getAll('equipment_ids');if(!ids.length){msg('loannotice','Select at least one item.');return}let due=f.get('due_at');let p={member_id:f.get('member_id'),equipment_ids:ids,due_at:due?new Date(due).toISOString():null,comment:f.get('comment')};try{let r=await api('/api/loans',{method:'POST',body:JSON.stringify(p)});msg('loannotice',r.loans.length+' item(s) checked out. Group '+r.loan_group_id.slice(0,8));e.target.reset();await refresh()}catch(x){msg('loannotice',x.message)}};
+window.returnItem=async id=>{let comment=prompt('Return comment (required):','Returned; condition inspected.');if(comment===null)return;let c=prompt('Condition after return: ready or needs_repair','ready');if(c===null)return;try{await api('/api/loans/'+id+'/return',{method:'POST',body:JSON.stringify({comment,condition_status:c})});await refresh()}catch(x){alert(x.message)}};
+window.detail=async id=>{try{let [x,events]=await Promise.all([api('/api/equipment/'+id),api('/api/equipment/'+id+'/history')]);$('modtitle').textContent=x.name+' — history';$('modbody').innerHTML=`<p>${borrow(x.status)} ${cond(x.condition_status)}</p><p class="muted small">Serial ${esc(x.serial_number||'—')} · QR DCM:${esc(x.qr_uuid)}</p><div class="form"><label>Condition<select id="newcond"><option value="ready" ${x.condition_status==='ready'?'selected':''}>Ready to use</option><option value="needs_repair" ${x.condition_status==='needs_repair'?'selected':''}>Needs repair</option></select></label><label>Comment (required)<textarea id="condcomment" rows="2" placeholder="Describe inspection, damage or repair"></textarea></label><button id="savecond">Save condition and comment</button></div><hr style="border:0;border-top:1px solid var(--line);margin:16px 0"><h3>Event timeline</h3>${events.map(v=>`<div class="event"><b>${esc(v.event_type.replaceAll('_',' '))}</b><span class="muted small">${dt(v.occurred_at)}</span><div>${esc(v.comment)}</div></div>`).join('')||'<p class="muted">No history yet.</p>'}`;$('modal').classList.add('open');$('savecond').onclick=async()=>{try{await api('/api/equipment/'+id+'/condition',{method:'PATCH',body:JSON.stringify({condition_status:$('newcond').value,comment:$('condcomment').value})});await refresh();await detail(id)}catch(e){alert(e.message)}}}catch(e){alert(e.message)}};$('close').onclick=()=>$('modal').classList.remove('open');refresh().catch(e=>alert('Unable to load application: '+e.message));
+</script></body></html>"###;
+ let html=html.replace("__MEMBERS__",&members.to_string()).replace("__READY__",&ready.to_string()).replace("__LOANS__",&loans.to_string()).replace("__REPAIR__",&repair.to_string()).replace("__EQ__",&eq.to_string()).replace("__LEVELS__",&levels);
+ Ok(Html(html))
 }
 
-pub async fn list_equipment(State(s): State<AppState>) -> Result<Json<Vec<Equipment>>, AppError> {
-    let rows = sqlx::query_as::<_, Equipment>(
-        "SELECT id, qr_uuid, category_id, name, description, serial_number, status, created_at FROM equipment ORDER BY name"
-    ).fetch_all(&s.db).await?;
-    Ok(Json(rows))
-}
+pub async fn list_equipment(State(s):State<AppState>)->Result<Json<Vec<Equipment>>,AppError>{Ok(Json(sqlx::query_as::<_,Equipment>(&format!("{EQ_SELECT} ORDER BY e.name")).fetch_all(&s.db).await?))}
+pub async fn get_equipment(State(s):State<AppState>,Path(id):Path<Uuid>)->Result<Json<Equipment>,AppError>{Ok(Json(sqlx::query_as::<_,Equipment>(&format!("{EQ_SELECT} WHERE e.id=$1")).bind(id).fetch_optional(&s.db).await?.ok_or(AppError::NotFound)?))}
+pub async fn create_equipment(State(s):State<AppState>,Json(i):Json<NewEquipment>)->Result<(StatusCode,Json<Equipment>),AppError>{i.validate().map_err(|e|AppError::BadRequest(e.to_string()))?;let comment=i.comment.as_deref().unwrap_or("Equipment registered");check_comment(comment)?;let mut tx=s.db.begin().await?;let id:Uuid=sqlx::query_scalar("INSERT INTO equipment(name,category_id,description,serial_number) VALUES($1,$2,$3,$4) RETURNING id").bind(i.name.trim()).bind(i.category_id).bind(i.description).bind(i.serial_number).fetch_one(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,event_type,to_state,comment) VALUES($1,'registered',jsonb_build_object('condition_status','ready'),$2)").bind(id).bind(comment.trim()).execute(&mut *tx).await?;tx.commit().await?;let row=sqlx::query_as::<_,Equipment>(&format!("{EQ_SELECT} WHERE e.id=$1")).bind(id).fetch_one(&s.db).await?;Ok((StatusCode::CREATED,Json(row)))}
+pub async fn list_categories(State(s):State<AppState>)->Result<Json<Vec<Category>>,AppError>{Ok(Json(sqlx::query_as::<_,Category>("SELECT id,name,description FROM equipment_categories ORDER BY name").fetch_all(&s.db).await?))}
+pub async fn create_category(State(s):State<AppState>,Json(i):Json<NewCategory>)->Result<(StatusCode,Json<Category>),AppError>{if i.name.trim().is_empty()||i.name.len()>100{return Err(AppError::BadRequest("Category name is required (max 100 characters)".into()))}let row=sqlx::query_as::<_,Category>("INSERT INTO equipment_categories(name,description) VALUES($1,$2) RETURNING id,name,description").bind(i.name.trim()).bind(i.description).fetch_one(&s.db).await?;Ok((StatusCode::CREATED,Json(row)))}
+pub async fn equipment_history(State(s):State<AppState>,Path(id):Path<Uuid>)->Result<Json<Vec<EquipmentEvent>>,AppError>{let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM equipment WHERE id=$1)").bind(id).fetch_one(&s.db).await?;if !exists{return Err(AppError::NotFound)}Ok(Json(sqlx::query_as::<_,EquipmentEvent>("SELECT id,equipment_id,loan_id,event_type,from_state,to_state,comment,occurred_at FROM equipment_events WHERE equipment_id=$1 ORDER BY occurred_at DESC").bind(id).fetch_all(&s.db).await?))}
+pub async fn change_condition(State(s):State<AppState>,Path(id):Path<Uuid>,Json(i):Json<ConditionRequest>)->Result<Json<Equipment>,AppError>{check_comment(&i.comment)?;if !["ready","needs_repair"].contains(&i.condition_status.as_str()){return Err(AppError::BadRequest("condition_status must be ready or needs_repair".into()))}let mut tx=s.db.begin().await?;let old:Option<String>=sqlx::query_scalar("SELECT condition_status FROM equipment WHERE id=$1 FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?;let old=old.ok_or(AppError::NotFound)?;let typ=if i.condition_status=="ready"{"maintenance_completed"}else{"maintenance_reported"};sqlx::query("UPDATE equipment SET condition_status=$1,updated_at=now() WHERE id=$2").bind(&i.condition_status).bind(id).execute(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,event_type,from_state,to_state,comment) VALUES($1,$2,jsonb_build_object('condition_status',$3),jsonb_build_object('condition_status',$4),$5)").bind(id).bind(typ).bind(old).bind(&i.condition_status).bind(i.comment.trim()).execute(&mut *tx).await?;tx.commit().await?;Ok(Json(sqlx::query_as::<_,Equipment>(&format!("{EQ_SELECT} WHERE e.id=$1")).bind(id).fetch_one(&s.db).await?))}
+pub async fn list_members(State(s):State<AppState>)->Result<Json<Vec<Member>>,AppError>{Ok(Json(sqlx::query_as::<_,Member>("SELECT id,full_name,email,phone,diving_level,active,created_at FROM members ORDER BY full_name").fetch_all(&s.db).await?))}
+pub async fn create_member(State(s):State<AppState>,Json(i):Json<NewMember>)->Result<(StatusCode,Json<Member>),AppError>{i.validate().map_err(|e|AppError::BadRequest(e.to_string()))?;if !LEVELS.contains(&i.diving_level.as_str()){return Err(AppError::BadRequest("Invalid diving_level".into()))}let row=sqlx::query_as::<_,Member>("INSERT INTO members(full_name,email,phone,diving_level) VALUES($1,$2,$3,$4) RETURNING id,full_name,email,phone,diving_level,active,created_at").bind(i.full_name.trim()).bind(i.email).bind(i.phone).bind(i.diving_level).fetch_one(&s.db).await?;Ok((StatusCode::CREATED,Json(row)))}
+pub async fn update_member_level(State(s):State<AppState>,Path(id):Path<Uuid>,Json(i):Json<UpdateMemberLevel>)->Result<Json<Member>,AppError>{if !LEVELS.contains(&i.diving_level.as_str()){return Err(AppError::BadRequest("Invalid diving_level".into()))}Ok(Json(sqlx::query_as::<_,Member>("UPDATE members SET diving_level=$1 WHERE id=$2 RETURNING id,full_name,email,phone,diving_level,active,created_at").bind(i.diving_level).bind(id).fetch_optional(&s.db).await?.ok_or(AppError::NotFound)?))}
+pub async fn list_loans(State(s):State<AppState>)->Result<Json<Vec<Loan>>,AppError>{Ok(Json(sqlx::query_as::<_,Loan>(&format!("{LOAN_SELECT} ORDER BY l.checked_out_at DESC")).fetch_all(&s.db).await?))}
+pub async fn checkout(State(s):State<AppState>,Json(i):Json<CheckoutRequest>)->Result<(StatusCode,Json<serde_json::Value>),AppError>{let mut ids=i.equipment_ids.unwrap_or_default();if let Some(id)=i.equipment_id{ids.push(id)}ids.sort();ids.dedup();if ids.is_empty(){return Err(AppError::BadRequest("Select at least one equipment item".into()))}if ids.len()>50{return Err(AppError::BadRequest("A checkout can contain at most 50 items".into()))}let comment=i.comment.as_deref().or(i.notes.as_deref()).unwrap_or("Equipment checked out");check_comment(comment)?;let mut tx=s.db.begin().await?;let active:Option<bool>=sqlx::query_scalar("SELECT active FROM members WHERE id=$1").bind(i.member_id).fetch_optional(&mut *tx).await?;if active!=Some(true){return Err(AppError::BadRequest("Member does not exist or is inactive".into()))}let group=Uuid::new_v4();let mut ids_created=Vec::new();for eid in ids{let state:Option<(String,String)>=sqlx::query_as("SELECT status,condition_status FROM equipment WHERE id=$1 FOR UPDATE").bind(eid).fetch_optional(&mut *tx).await?;let (borrow,condition)=state.ok_or(AppError::NotFound)?;if borrow!="available"{return Err(AppError::Conflict(format!("Equipment {eid} is already borrowed")))}if condition!="ready"{return Err(AppError::Conflict(format!("Equipment {eid} needs repair and cannot be borrowed")))}let lid:Uuid=sqlx::query_scalar("INSERT INTO loans(loan_group_id,equipment_id,member_id,due_at,notes) VALUES($1,$2,$3,$4,$5) RETURNING id").bind(group).bind(eid).bind(i.member_id).bind(i.due_at).bind(i.notes.as_deref()).fetch_one(&mut *tx).await?;sqlx::query("UPDATE equipment SET status='checked_out',updated_at=now() WHERE id=$1").bind(eid).execute(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,loan_id,event_type,from_state,to_state,comment) VALUES($1,$2,'checked_out',jsonb_build_object('status','available'),jsonb_build_object('status','checked_out','member_id',$3),$4)").bind(eid).bind(lid).bind(i.member_id).bind(comment.trim()).execute(&mut *tx).await?;ids_created.push(lid)}tx.commit().await?;let mut result=Vec::new();for lid in ids_created{result.push(sqlx::query_as::<_,Loan>(&format!("{LOAN_SELECT} WHERE l.id=$1")).bind(lid).fetch_one(&s.db).await?)}Ok((StatusCode::CREATED,Json(serde_json::json!({"loan_group_id":group,"loans":result}))))}
+pub async fn return_equipment(State(s):State<AppState>,Path(id):Path<Uuid>,body:Option<Json<ReturnRequest>>)->Result<Json<Loan>,AppError>{let i=body.map(|Json(v)|v).unwrap_or_default();let comment=i.comment.as_deref().unwrap_or("Returned; condition retained pending inspection");check_comment(comment)?;if let Some(c)=&i.condition_status{if !["ready","needs_repair"].contains(&c.as_str()){return Err(AppError::BadRequest("condition_status must be ready or needs_repair".into()))}}let mut tx=s.db.begin().await?;let row:Option<(Uuid,String)>=sqlx::query_as("SELECT l.equipment_id,e.condition_status FROM loans l JOIN equipment e ON e.id=l.equipment_id WHERE l.id=$1 AND l.returned_at IS NULL FOR UPDATE OF l,e").bind(id).fetch_optional(&mut *tx).await?;let (eid,old)=row.ok_or(AppError::NotFound)?;let new=i.condition_status.as_deref().unwrap_or(&old);sqlx::query("UPDATE loans SET returned_at=now() WHERE id=$1").bind(id).execute(&mut *tx).await?;sqlx::query("UPDATE equipment SET status='available',condition_status=$1,updated_at=now() WHERE id=$2").bind(new).bind(eid).execute(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,loan_id,event_type,from_state,to_state,comment) VALUES($1,$2,'returned',jsonb_build_object('status','checked_out','condition_status',$3),jsonb_build_object('status','available','condition_status',$4),$5)").bind(eid).bind(id).bind(&old).bind(new).bind(comment.trim()).execute(&mut *tx).await?;tx.commit().await?;Ok(Json(sqlx::query_as::<_,Loan>(&format!("{LOAN_SELECT} WHERE l.id=$1")).bind(id).fetch_one(&s.db).await?))}
 
-pub async fn get_equipment(State(s): State<AppState>, Path(id): Path<Uuid>) -> Result<Json<Equipment>, AppError> {
-    let row = sqlx::query_as::<_, Equipment>(
-        "SELECT id, qr_uuid, category_id, name, description, serial_number, status, created_at FROM equipment WHERE id = $1"
-    ).bind(id).fetch_optional(&s.db).await?.ok_or(AppError::NotFound)?;
-    Ok(Json(row))
-}
-
-pub async fn create_equipment(
-    State(s): State<AppState>, Json(input): Json<NewEquipment>
-) -> Result<(StatusCode, Json<Equipment>), AppError> {
-    input.validate().map_err(|e| AppError::BadRequest(e.to_string()))?;
-    let row = sqlx::query_as::<_, Equipment>(
-        "INSERT INTO equipment (name, category_id, description, serial_number) VALUES ($1,$2,$3,$4) RETURNING id, qr_uuid, category_id, name, description, serial_number, status, created_at"
-    ).bind(input.name.trim()).bind(input.category_id).bind(input.description)
-     .bind(input.serial_number).fetch_one(&s.db).await?;
-    Ok((StatusCode::CREATED, Json(row)))
-}
-
-pub async fn list_members(State(s): State<AppState>) -> Result<Json<Vec<Member>>, AppError> {
-    let rows = sqlx::query_as::<_, Member>(
-        "SELECT id, full_name, email, phone, diving_level, active, created_at FROM members ORDER BY full_name"
-    ).fetch_all(&s.db).await?;
-    Ok(Json(rows))
-}
-
-pub async fn create_member(
-    State(s): State<AppState>, Json(input): Json<NewMember>
-) -> Result<(StatusCode, Json<Member>), AppError> {
-    input.validate().map_err(|e| AppError::BadRequest(e.to_string()))?;
-    const LEVELS: [&str; 12] = ["N1", "PN1", "N2", "PN2", "N3", "PN3", "N4", "PN4", "E1", "E2", "E3", "E4"];
-    if !LEVELS.contains(&input.diving_level.as_str()) {
-        return Err(AppError::BadRequest("invalid diving_level; choose one of N1, PN1, N2, PN2, N3, PN3, N4, PN4, E1, E2, E3, or E4".into()));
-    }
-    let row = sqlx::query_as::<_, Member>(
-        "INSERT INTO members (full_name, email, phone, diving_level) VALUES ($1,$2,$3,$4) RETURNING id, full_name, email, phone, diving_level, active, created_at"
-    ).bind(input.full_name.trim()).bind(input.email).bind(input.phone).bind(input.diving_level)
-     .fetch_one(&s.db).await?;
-    Ok((StatusCode::CREATED, Json(row)))
-}
-
-pub async fn update_member_level(
-    State(s): State<AppState>, Path(id): Path<Uuid>, Json(input): Json<UpdateMemberLevel>
-) -> Result<Json<Member>, AppError> {
-    const LEVELS: [&str; 12] = ["N1", "PN1", "N2", "PN2", "N3", "PN3", "N4", "PN4", "E1", "E2", "E3", "E4"];
-    if !LEVELS.contains(&input.diving_level.as_str()) {
-        return Err(AppError::BadRequest("invalid diving_level".into()));
-    }
-    let row = sqlx::query_as::<_, Member>(
-        "UPDATE members SET diving_level = $1 WHERE id = $2 RETURNING id, full_name, email, phone, diving_level, active, created_at"
-    ).bind(input.diving_level).bind(id).fetch_optional(&s.db).await?.ok_or(AppError::NotFound)?;
-    Ok(Json(row))
-}
-
-pub async fn list_loans(State(s): State<AppState>) -> Result<Json<Vec<Loan>>, AppError> {
-    let rows = sqlx::query_as::<_, Loan>(r#"
-        SELECT l.id, l.equipment_id, e.name AS equipment_name, l.member_id,
-               m.full_name AS member_name, l.checked_out_at, l.due_at,
-               l.returned_at, l.notes
-        FROM loans l JOIN equipment e ON e.id=l.equipment_id
-        JOIN members m ON m.id=l.member_id
-        ORDER BY l.checked_out_at DESC
-    "#).fetch_all(&s.db).await?;
-    Ok(Json(rows))
-}
-
-pub async fn checkout(
-    State(s): State<AppState>, Json(input): Json<CheckoutRequest>
-) -> Result<(StatusCode, Json<Loan>), AppError> {
-    let mut tx = s.db.begin().await?;
-    let status: Option<String> = sqlx::query_scalar(
-        "SELECT status FROM equipment WHERE id=$1 FOR UPDATE"
-    ).bind(input.equipment_id).fetch_optional(&mut *tx).await?;
-    match status.as_deref() {
-        None => return Err(AppError::NotFound),
-        Some("available") => {},
-        Some(other) => return Err(AppError::Conflict(format!("equipment is {other}"))),
-    }
-    let member_active: Option<bool> = sqlx::query_scalar(
-        "SELECT active FROM members WHERE id=$1"
-    ).bind(input.member_id).fetch_optional(&mut *tx).await?;
-    if member_active != Some(true) {
-        return Err(AppError::BadRequest("member does not exist or is inactive".into()));
-    }
-    let loan_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO loans (id,equipment_id,member_id,due_at,notes) VALUES ($1,$2,$3,$4,$5)")
-        .bind(loan_id).bind(input.equipment_id).bind(input.member_id)
-        .bind(input.due_at).bind(input.notes).execute(&mut *tx).await?;
-    sqlx::query("UPDATE equipment SET status='checked_out', updated_at=now() WHERE id=$1")
-        .bind(input.equipment_id).execute(&mut *tx).await?;
-    tx.commit().await?;
-    let row = sqlx::query_as::<_, Loan>(r#"
-        SELECT l.id, l.equipment_id, e.name AS equipment_name, l.member_id,
-               m.full_name AS member_name, l.checked_out_at, l.due_at,
-               l.returned_at, l.notes FROM loans l
-        JOIN equipment e ON e.id=l.equipment_id JOIN members m ON m.id=l.member_id
-        WHERE l.id=$1
-    "#).bind(loan_id).fetch_one(&s.db).await?;
-    Ok((StatusCode::CREATED, Json(row)))
-}
-
-pub async fn return_equipment(
-    State(s): State<AppState>, Path(id): Path<Uuid>
-) -> Result<Json<Loan>, AppError> {
-    let mut tx = s.db.begin().await?;
-    let equipment_id: Option<Uuid> = sqlx::query_scalar(
-        "UPDATE loans SET returned_at=now() WHERE id=$1 AND returned_at IS NULL RETURNING equipment_id"
-    ).bind(id).fetch_optional(&mut *tx).await?;
-    let equipment_id = equipment_id.ok_or(AppError::NotFound)?;
-    sqlx::query("UPDATE equipment SET status='available', updated_at=now() WHERE id=$1 AND status='checked_out'")
-        .bind(equipment_id).execute(&mut *tx).await?;
-    tx.commit().await?;
-    let row = sqlx::query_as::<_, Loan>(r#"
-        SELECT l.id, l.equipment_id, e.name AS equipment_name, l.member_id,
-               m.full_name AS member_name, l.checked_out_at, l.due_at,
-               l.returned_at, l.notes FROM loans l
-        JOIN equipment e ON e.id=l.equipment_id JOIN members m ON m.id=l.member_id
-        WHERE l.id=$1
-    "#).bind(id).fetch_one(&s.db).await?;
-    Ok(Json(row))
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn qr_payload_has_stable_prefix_and_uuid() {
-        let id = uuid::Uuid::nil();
-        assert_eq!(format!("DCM:{id}"), "DCM:00000000-0000-0000-0000-000000000000");
-    }
-}
+#[cfg(test)] mod tests {use super::*;#[test]fn allowed_levels_are_fixed(){assert_eq!(LEVELS.len(),12);assert!(!LEVELS.contains(&"N5"));}#[test]fn qr_prefix_is_stable(){assert_eq!(format!("DCM:{}",Uuid::nil()),"DCM:00000000-0000-0000-0000-000000000000");}}

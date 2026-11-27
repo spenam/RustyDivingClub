@@ -1,6 +1,7 @@
 mod routes;
 mod state;
 mod error;
+mod export;
 
 use axum::{routing::get, Router};
 use sqlx::postgres::PgPoolOptions;
@@ -29,8 +30,12 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(routes::dashboard))
         .route("/health", get(routes::health))
+        .route("/api/export.xlsx", get(|state: axum::extract::State<state::AppState>| async move { export::export_workbook(&state.db).await }))
         .route("/api/equipment", get(routes::list_equipment).post(routes::create_equipment))
         .route("/api/equipment/:id", get(routes::get_equipment))
+        .route("/api/equipment/:id/history", get(routes::equipment_history))
+        .route("/api/equipment/:id/condition", axum::routing::patch(routes::change_condition))
+        .route("/api/categories", get(routes::list_categories).post(routes::create_category))
         .route("/api/members", get(routes::list_members).post(routes::create_member))
         .route("/api/members/:id", axum::routing::patch(routes::update_member_level))
         .route("/api/loans", get(routes::list_loans).post(routes::checkout))
