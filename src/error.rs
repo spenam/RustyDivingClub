@@ -11,6 +11,8 @@ pub enum AppError {
     Database(#[from] sqlx::Error),
     #[error("invalid request: {0}")]
     BadRequest(String),
+    #[error("export failed: {0}")]
+    Export(String),
 }
 
 impl IntoResponse for AppError {
@@ -23,6 +25,10 @@ impl IntoResponse for AppError {
                 (StatusCode::INTERNAL_SERVER_ERROR, "database error".into())
             }
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            Self::Export(_) => {
+                tracing::error!(error = %self, "spreadsheet export failed");
+                (StatusCode::INTERNAL_SERVER_ERROR, "spreadsheet export failed".into())
+            }
         };
         (status, Json(json!({"error": message}))).into_response()
     }
