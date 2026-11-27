@@ -53,12 +53,12 @@ pub async fn export_workbook(db: &PgPool) -> Result<Response, AppError> {
     let mut workbook = Workbook::new();
 
     let members = json_rows(db, r#"
-        SELECT jsonb_build_array(id::text, full_name, email, phone, diving_level,
+        SELECT jsonb_build_array(id::text, full_name, diving_level,
                                  active::text, created_at::text) AS data
         FROM members ORDER BY full_name, id
     "#).await?;
     add_sheet(&mut workbook, "Members",
-        &["member_id","full_name","email","phone","diving_level","active","created_at"],
+        &["member_id","full_name","diving_level","active","created_at"],
         members)?;
 
     let categories = json_rows(db, r#"
@@ -90,26 +90,25 @@ pub async fn export_workbook(db: &PgPool) -> Result<Response, AppError> {
     let loans = json_rows(db, r#"
         SELECT jsonb_build_array(l.id::text, l.loan_group_id::text,
             l.equipment_id::text, e.name, l.member_id::text, m.full_name,
-            l.checked_out_at::text, l.due_at::text, l.returned_at::text,
-            l.notes) AS data
+            l.checked_out_at::text, l.due_at::text, l.returned_at::text) AS data
         FROM loans l JOIN equipment e ON e.id=l.equipment_id
         JOIN members m ON m.id=l.member_id
         ORDER BY l.checked_out_at, l.id
     "#).await?;
     add_sheet(&mut workbook, "Loans",
         &["loan_id","loan_group_id","equipment_id","equipment_name",
-          "member_id","member_name","checked_out_at","due_at","returned_at","notes"],
+          "member_id","member_name","checked_out_at","due_at","returned_at"],
         loans)?;
 
     let history = json_rows(db, r#"
         SELECT jsonb_build_array(id::text, equipment_id::text, loan_id::text,
-            event_type, from_state::text, to_state::text, comment,
+            event_type, from_state::text, to_state::text,
             occurred_at::text) AS data
         FROM equipment_events ORDER BY occurred_at, id
     "#).await?;
     add_sheet(&mut workbook, "Equipment History",
         &["event_id","equipment_id","loan_id","event_type","from_state_json",
-          "to_state_json","comment","occurred_at"], history)?;
+          "to_state_json","occurred_at"], history)?;
 
     let exported_at = chrono::Utc::now().to_rfc3339();
     add_sheet(&mut workbook, "Backup Info",
