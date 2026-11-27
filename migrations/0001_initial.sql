@@ -32,20 +32,25 @@ CREATE TABLE equipment_categories (
 );
 
 CREATE TABLE equipment (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    qr_uuid          UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
-    category_id      UUID REFERENCES equipment_categories(id),
-    name             TEXT NOT NULL,
-    description      TEXT,
-    serial_number    TEXT UNIQUE,
-    status           TEXT NOT NULL DEFAULT 'available'
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    qr_uuid               UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    category_id           UUID REFERENCES equipment_categories(id),
+    name                  TEXT NOT NULL,
+    brand                 TEXT,
+    regulator_connection  TEXT
+        CONSTRAINT equipment_regulator_connection_check
+        CHECK (regulator_connection IS NULL OR regulator_connection IN ('DIN', 'ETRIER')),
+    size                  TEXT,
+    description           TEXT,
+    serial_number         TEXT UNIQUE,
+    status                TEXT NOT NULL DEFAULT 'available'
         CONSTRAINT equipment_status_check
         CHECK (status IN ('available', 'checked_out')),
-    condition_status TEXT NOT NULL DEFAULT 'ready'
+    condition_status      TEXT NOT NULL DEFAULT 'ready'
         CONSTRAINT equipment_condition_status_check
         CHECK (condition_status IN ('ready', 'needs_repair')),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX equipment_status_idx ON equipment(status);
