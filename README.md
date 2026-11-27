@@ -116,11 +116,35 @@ Invoke-RestMethod -Uri "http://localhost:8080/api/equipment/EQUIPMENT-UUID/condi
 Invoke-RestMethod -Uri "http://localhost:8080/api/equipment/EQUIPMENT-UUID/history"
 ```
 
+## Export a complete spreadsheet backup
+
+From the dashboard, click **Export backup (.xlsx)**. This downloads `diving-club-backup.xlsx` with these worksheets:
+
+- `Members`
+- `Categories`
+- `Equipment`
+- `Loans`
+- `Equipment History`
+- `Backup Info` (format version and export timestamp)
+
+You can also download it directly at `http://localhost:8080/api/export.xlsx`.
+
+The export is a portable reporting/backup workbook, not a direct PostgreSQL restore. Keep the ID columns intact. A future import feature should validate the workbook, show a preview, detect duplicate IDs and conflicting changes, and require confirmation before applying anything. Until that is implemented, restore a complete system backup using PostgreSQL `pg_dump` rather than editing and re-importing this workbook.
+
+### Back up the database as well (recommended)
+
+The Excel export is convenient for club staff, but it does not preserve every database detail or guarantee a full technical restore. For disaster recovery, also keep a database dump:
+
+```powershell
+docker compose exec db pg_dump -U club -d diving_club -F c -f /tmp/diving_club_backup.dump
+docker compose cp db:/tmp/diving_club_backup.dump .\\diving_club_backup.dump
+```
+
 ## API overview
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/health` | Health check |
+| GET | `/health` | Health check |\n| GET | `/api/export.xlsx` | Download all club data as an Excel workbook |
 | GET | `/` | Dashboard |
 | GET / POST | `/api/categories` | List / create categories |
 | GET / POST | `/api/equipment` | List / register physical items |
