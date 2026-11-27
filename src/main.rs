@@ -32,6 +32,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/equipment", get(routes::list_equipment).post(routes::create_equipment))
         .route("/api/equipment/:id", get(routes::get_equipment))
         .route("/api/members", get(routes::list_members).post(routes::create_member))
+        .route("/api/members/:id", axum::routing::patch(routes::update_member_level))
         .route("/api/loans", get(routes::list_loans).post(routes::checkout))
         .route("/api/loans/:id/return", axum::routing::post(routes::return_equipment))
         .with_state(app_state)
