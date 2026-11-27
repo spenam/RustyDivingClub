@@ -1,197 +1,197 @@
-# Rusty Diving Club Manager
+# 🤿 Diving Club Manager
 
-A local diving-club management app built with Rust, Axum, PostgreSQL and a browser dashboard.
+**A modern, open-source management platform for scuba diving clubs.**
 
-## Included
+Diving Club Manager helps scuba diving clubs keep their members, equipment and equipment loans organised in one place. Built with **Rust**, **Axum** and **PostgreSQL**, it aims to provide a simple, reliable and maintainable solution for everyday club operations.
 
-- Member directory and diving levels `N1`, `PN1`, `N2`, `PN2`, `N3`, `PN3`, `N4`, `PN4`, `E1`, `E2`, `E3`, `E4`.
-- Equipment categories and separately tracked physical items, serial numbers and stable QR UUIDs.
-- Optional equipment brand for all items; regulator connection type (`DIN` / `ETRIER`); size for BCDs and wetsuits.
-- Independent equipment borrowing status (`available` / `checked_out`) and condition (`ready` / `needs_repair`).
-- Multi-item checkout for one member in a single transaction; each physical item has its own loan and shared `loan_group_id`.
-- Optional due dates, overdue filtering and individual returns.
-- Return inspection with a comment and an explicit condition selection.
-- Append-only event timeline for item registration, checkout, return, maintenance/condition changes and notes.
-- Row locking and a partial unique database index prevent double checkout; damaged items cannot be borrowed.
+[![CI](https://github.com/OWNER/REPOSITORY/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPOSITORY/actions/workflows/ci.yml)
+![Rust](https://img.shields.io/badge/Rust-powered-orange?logo=rust)
+![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-blue?logo=postgresql)
+![Docker](https://img.shields.io/badge/Deployment-Docker-2496ED?logo=docker)
+![License](https://img.shields.io/badge/License-TBD-lightgrey)
 
-## Run on Windows with Docker Desktop
+---
 
-Open Docker Desktop, then PowerShell in the extracted project directory:
+## 🌊 Why Diving Club Manager?
 
-```powershell
+Running a diving club involves more than organising dives. Members have qualifications, equipment needs regular maintenance, and borrowed gear needs to be tracked.
+
+Diving Club Manager brings these activities together in a single application, helping clubs spend less time managing spreadsheets and more time enjoying the underwater world.
+
+## ✨ Features
+
+### 👥 Member management
+- Keep track of club members.
+- Record diving qualifications and certification levels.
+- Support qualification levels:
+  - N1, PN1, N2, PN2
+  - N3, PN3, N4, PN4
+  - E1, E2, E3, E4
+
+### 🧰 Equipment management
+- Organise equipment into categories.
+- Record individual equipment items.
+- Store equipment brands.
+- Record regulator connection types:
+  - DIN
+  - Étrier
+- Store sizes for BCDs and wetsuits.
+- Track equipment condition:
+  - Ready
+  - Needs repair
+
+### 📦 Equipment loans
+- Check equipment out to club members.
+- Include multiple items in a single loan.
+- Record checkout and expected return dates.
+- Track whether equipment is available or currently borrowed.
+- Keep a history of equipment movements and comments.
+
+### 📊 Excel export
+- Export equipment information to Excel.
+- Make inventory information easier to review and share.
+
+### ⚙️ Continuous Integration
+- GitHub Actions workflow.
+- Automated Rust checks and tests.
+- Clippy linting.
+- Docker image build verification.
+
+---
+
+## 🛠️ Technology stack
+
+| Technology | Purpose |
+|---|---|
+| Rust | Backend application |
+| Axum | Web framework |
+| SQLx | Database access |
+| PostgreSQL | Relational database |
+| HTML / CSS / JavaScript | User interface |
+| Docker | Containerisation |
+| GitHub Actions | Continuous integration |
+
+---
+
+## 🚀 Getting started
+
+### Prerequisites
+
+Before running the project, make sure you have:
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [Git](https://git-scm.com/)
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/OWNER/REPOSITORY.git
+cd REPOSITORY
+```
+
+### 2. Configure environment variables
+
+Check the project's Docker Compose configuration and `.env` requirements.
+
+Create your local `.env` file using the example configuration if one is provided.
+
+**Never commit passwords, database credentials or other secrets to GitHub.**
+
+### 3. Start the application
+
+```bash
 docker compose up --build -d
-docker compose ps
+```
+
+### 4. Open the application
+
+Visit:
+
+**http://localhost:8080**
+
+To follow application logs:
+
+```bash
 docker compose logs -f app
 ```
 
-Open **http://localhost:8080**. Health endpoint: **http://localhost:8080/health**. SQL migrations run automatically when the app starts.
+To stop the application:
 
-Stop without deleting your database:
-
-```powershell
+```bash
 docker compose down
 ```
 
-Restart:
+---
 
-```powershell
-docker compose up -d
+## 🗂️ Project structure
+
+```text
+.
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── migrations/
+├── src/
+├── Cargo.toml
+├── Cargo.lock
+├── Dockerfile
+├── docker-compose.yml
+└── README.md
 ```
 
-Rebuild after source changes:
+*The exact structure may vary as the project evolves.*
 
-```powershell
-docker compose up --build -d
-docker compose logs -f app
-```
+---
 
-**Do not use `docker compose down -v` unless you intend to erase all local club data.** Back up the PostgreSQL volume before production upgrades.
+## 🧪 Development
 
-## PowerShell API examples
+If you have Rust installed locally, you can run the following checks:
 
-Use `$null` (not bare `null`) and `Invoke-RestMethod` for JSON.
-
-### Add a category
-
-```powershell
-$body = @{ name = "Regulators"; description = "Club regulator sets" } | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://localhost:8080/api/categories" -Method Post -ContentType "application/json" -Body $body
-```
-
-### Register equipment
-
-```powershell
-$body = @{
-  name = "Regulator set"
-  category_id = $null
-  serial_number = "REG-004"
-  brand = "Aqualung"
-  regulator_connection = "DIN" # DIN or ETRIER for regulator categories
-  size = $null # Use for BCD / wetsuit categories, e.g. "M"
-  description = "Primary regulator"
-  comment = "New regulator registered"
-} | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://localhost:8080/api/equipment" -Method Post -ContentType "application/json" -Body $body
-```
-
-To assign a category, use the category `id` returned by the previous request instead of `$null`.
-
-### Check out multiple items to one member
-
-Replace the UUID placeholders with real IDs from `/api/members` and `/api/equipment`.
-
-```powershell
-$body = @{
-  member_id = "MEMBER-UUID"
-  equipment_ids = @("EQUIPMENT-UUID-1", "EQUIPMENT-UUID-2")
-  due_at = $null
-  comment = "Issued for Saturday training"
-} | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://localhost:8080/api/loans" -Method Post -ContentType "application/json" -Body $body
-```
-
-Due date is optional. For a due date, provide an ISO timestamp such as `2026-12-01T18:00:00Z`.
-
-### Return an item
-
-```powershell
-$body = @{
-  comment = "Returned after pool session; inspection passed"
-  condition_status = "ready"
-} | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://localhost:8080/api/loans/LOAN-UUID/return" -Method Post -ContentType "application/json" -Body $body
-```
-
-If damaged, set `condition_status = "needs_repair"` and explain the issue in the comment. Each item in a group is returned separately.
-
-### Mark an item as needing repair / ready
-
-```powershell
-$body = @{
-  condition_status = "needs_repair"
-  comment = "First-stage regulator leaking during inspection"
-} | ConvertTo-Json -Compress
-Invoke-RestMethod -Uri "http://localhost:8080/api/equipment/EQUIPMENT-UUID/condition" -Method Patch -ContentType "application/json" -Body $body
-```
-
-### View an item's event history
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8080/api/equipment/EQUIPMENT-UUID/history"
-```
-
-## Export a complete spreadsheet backup
-
-From the dashboard, click **Export backup (.xlsx)**. This downloads `diving-club-backup.xlsx` with these worksheets:
-
-- `Members`
-- `Categories`
-- `Equipment`
-- `Loans`
-- `Equipment History`
-- `Backup Info` (format version and export timestamp)
-
-You can also download it directly at `http://localhost:8080/api/export.xlsx`.
-
-The Equipment worksheet also includes `brand`, `regulator_connection` and `size`. The export format version is now 2.
-
-The export is a portable reporting/backup workbook, not a direct PostgreSQL restore. Keep the ID columns intact. A future import feature should validate the workbook, show a preview, detect duplicate IDs and conflicting changes, and require confirmation before applying anything. Until that is implemented, restore a complete system backup using PostgreSQL `pg_dump` rather than editing and re-importing this workbook.
-
-### Back up the database as well (recommended)
-
-The Excel export is convenient for club staff, but it does not preserve every database detail or guarantee a full technical restore. For disaster recovery, also keep a database dump:
-
-```powershell
-docker compose exec db pg_dump -U club -d diving_club -F c -f /tmp/diving_club_backup.dump
-docker compose cp db:/tmp/diving_club_backup.dump .\\diving_club_backup.dump
-```
-
-## API overview
-
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | Health check |\n| GET | `/api/export.xlsx` | Download all club data as an Excel workbook |
-| GET | `/` | Dashboard |
-| GET / POST | `/api/categories` | List / create categories |
-| GET / POST | `/api/equipment` | List / register physical items |
-| GET | `/api/equipment/:id` | Item details and current borrower |
-| GET | `/api/equipment/:id/history` | Item event history |
-| PATCH | `/api/equipment/:id/condition` | Change condition; comment required |
-| GET / POST | `/api/members` | List / create members |
-| PATCH | `/api/members/:id` | Update member diving level |
-| GET | `/api/loans` | Loan history |
-| POST | `/api/loans` | Checkout one or multiple items |
-| POST | `/api/loans/:id/return` | Return one item |
-
-Checkout accepts `equipment_ids` (array); the old single `equipment_id` field is also accepted. Response includes `loan_group_id` and the individual loan records.
-
-## Migration and existing data
-
-Migration `0003_equipment_loans_history.sql` adds the independent condition field, loan grouping and equipment event log. It preserves existing members, equipment and loans. Existing `maintenance` / `unavailable` equipment becomes `needs_repair`; other equipment becomes `ready`. Borrowing status is reconciled against open loans. Past events are not fabricated; each pre-existing item receives a migration note that older history was unavailable.
-
-## Safety and permissions
-
-Checkout is refused unless an item is not already borrowed and its condition is `ready`. Each item can have only one open loan. A return records the comment and condition; it does not silently auto-clear a repair state. History records timestamps and comments and is append-only through these API operations.
-
-**Important:** This starter still has no login system or role-based access control. Comments are required for condition changes, but the API does not yet verify that the caller is an administrator or authorised equipment manager, and does not identify the acting user. Keep it on a trusted local network until authentication, roles, actor audit identity, backups and HTTPS are implemented. Do not expose it publicly.
-
-## Development checks
-
-With Rust installed locally:
-
-```powershell
-cargo fmt --check
+```bash
+cargo check
 cargo test
-cargo clippy -- -D warnings
+cargo clippy --all-targets --all-features
 ```
 
+The GitHub Actions workflow runs automated checks when changes are pushed or pull requests are opened against the configured main branches.
 
+---
 
-## Equipment characteristics
+## 🗺️ Roadmap
 
-When registering equipment, choose a category first:
-- **Brand** is available for every item.
-- For a category whose name contains **Regulator**, the form displays a connection selector: **DIN** or **Étrier**.
-- For categories named **BCD**, **Wetsuit**, **Wet suit**, **Drysuit** or **Dry suit**, the form displays a free-text size field (for example XS, M, L, XL, or a club-specific size).
+Planned improvements for future versions:
 
-These fields are optional so existing equipment remains compatible. The database migration adds nullable columns and preserves existing records. The Equipment worksheet in the Excel export includes all three fields.
+- [ ] Excel import for equipment inventory.
+- [ ] More detailed equipment maintenance tracking.
+- [ ] Improved member and equipment search.
+- [ ] Equipment history and reporting improvements.
+- [ ] Authentication and user roles.
+- [ ] QR code support for faster equipment identification.
+
+---
+
+## 🤝 Contributing
+
+Contributions, ideas and bug reports are welcome!
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Make your changes.
+4. Run the relevant tests.
+5. Open a pull request with a clear description.
+
+If you find a bug or have an idea for an improvement, feel free to open an issue.
+
+---
+
+## 📜 License
+
+Add the project's chosen open-source license here before publishing or redistributing the software.
+
+---
+
+## 🐠 Built for diving clubs
+
+Made with ❤️ and Rust, for the people who make diving clubs work.
+
+**Less paperwork. Better equipment tracking. More time underwater.**
