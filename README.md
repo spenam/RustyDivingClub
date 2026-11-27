@@ -6,6 +6,7 @@ A local diving-club management app built with Rust, Axum, PostgreSQL and a brows
 
 - Member directory and diving levels `N1`, `PN1`, `N2`, `PN2`, `N3`, `PN3`, `N4`, `PN4`, `E1`, `E2`, `E3`, `E4`.
 - Equipment categories and separately tracked physical items, serial numbers and stable QR UUIDs.
+- Optional equipment brand for all items; regulator connection type (`DIN` / `ETRIER`); size for BCDs and wetsuits.
 - Independent equipment borrowing status (`available` / `checked_out`) and condition (`ready` / `needs_repair`).
 - Multi-item checkout for one member in a single transaction; each physical item has its own loan and shared `loan_group_id`.
 - Optional due dates, overdue filtering and individual returns.
@@ -64,6 +65,9 @@ $body = @{
   name = "Regulator set"
   category_id = $null
   serial_number = "REG-004"
+  brand = "Aqualung"
+  regulator_connection = "DIN" # DIN or ETRIER for regulator categories
+  size = $null # Use for BCD / wetsuit categories, e.g. "M"
   description = "Primary regulator"
   comment = "New regulator registered"
 } | ConvertTo-Json -Compress
@@ -129,6 +133,8 @@ From the dashboard, click **Export backup (.xlsx)**. This downloads `diving-club
 
 You can also download it directly at `http://localhost:8080/api/export.xlsx`.
 
+The Equipment worksheet also includes `brand`, `regulator_connection` and `size`. The export format version is now 2.
+
 The export is a portable reporting/backup workbook, not a direct PostgreSQL restore. Keep the ID columns intact. A future import feature should validate the workbook, show a preview, detect duplicate IDs and conflicting changes, and require confirmation before applying anything. Until that is implemented, restore a complete system backup using PostgreSQL `pg_dump` rather than editing and re-importing this workbook.
 
 ### Back up the database as well (recommended)
@@ -179,3 +185,13 @@ cargo test
 cargo clippy -- -D warnings
 ```
 
+
+
+## Equipment characteristics
+
+When registering equipment, choose a category first:
+- **Brand** is available for every item.
+- For a category whose name contains **Regulator**, the form displays a connection selector: **DIN** or **Étrier**.
+- For categories named **BCD**, **Wetsuit**, **Wet suit**, **Drysuit** or **Dry suit**, the form displays a free-text size field (for example XS, M, L, XL, or a club-specific size).
+
+These fields are optional so existing equipment remains compatible. The database migration adds nullable columns and preserves existing records. The Equipment worksheet in the Excel export includes all three fields.
