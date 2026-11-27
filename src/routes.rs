@@ -16,9 +16,28 @@ const LOAN_SELECT: &str = "SELECT l.id,l.loan_group_id,l.equipment_id,e.name equ
 #[derive(Debug,Serialize,FromRow)] pub struct EquipmentEvent { pub id:Uuid,pub equipment_id:Uuid,pub loan_id:Option<Uuid>,pub event_type:String,pub from_state:Option<serde_json::Value>,pub to_state:Option<serde_json::Value>,pub comment:String,pub occurred_at:DateTime<Utc> }
 #[derive(Debug,Serialize,FromRow)] pub struct Category { pub id:Uuid,pub name:String,pub description:Option<String> }
 #[derive(Debug,Deserialize,Validate)] pub struct NewEquipment { #[validate(length(min=1,max=160))] pub name:String,pub category_id:Option<Uuid>,#[validate(length(max=120))] pub brand:Option<String>,pub regulator_connection:Option<String>,#[validate(length(max=40))] pub size:Option<String>,pub description:Option<String>,pub serial_number:Option<String>,pub comment:Option<String> }
+#[derive(Debug, Deserialize, Validate)]
+pub struct UpdateEquipment {
+    #[validate(length(min = 1, max = 160))]
+    pub name: String,
+    pub category_id: Option<Uuid>,
+    #[validate(length(max = 120))]
+    pub brand: Option<String>,
+    pub regulator_connection: Option<String>,
+    #[validate(length(max = 40))]
+    pub size: Option<String>,
+    pub description: Option<String>,
+    pub serial_number: Option<String>,
+    pub comment: Option<String>,
+}
 #[derive(Debug,Deserialize)] pub struct NewCategory { pub name:String,pub description:Option<String> }
 #[derive(Debug,Deserialize,Validate)] pub struct NewMember { #[validate(length(min=1,max=160))] pub full_name:String,pub diving_level:String }
-#[derive(Debug,Deserialize)] pub struct UpdateMemberLevel { pub diving_level:String }
+#[derive(Debug, Deserialize, Default)]
+pub struct UpdateMember {
+    pub full_name: Option<String>,
+    pub diving_level: Option<String>,
+    pub active: Option<bool>,
+}
 #[derive(Debug,Deserialize)] pub struct CheckoutRequest { pub equipment_id:Option<Uuid>,pub equipment_ids:Option<Vec<Uuid>>,pub member_id:Uuid,pub due_at:Option<DateTime<Utc>>,pub notes:Option<String>,pub comment:Option<String> }
 #[derive(Debug,Deserialize,Default)] pub struct ReturnRequest { pub comment:Option<String>,pub condition_status:Option<String> }
 #[derive(Debug,Deserialize)] pub struct ConditionRequest { pub condition_status:String,pub comment:String }
@@ -34,46 +53,170 @@ pub async fn dashboard(State(s):State<AppState>)->Result<Html<String>,AppError>{
  let levels=LEVELS.iter().map(|x|format!("<option>{x}</option>")).collect::<String>();
  let html=r###"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diving Club Manager</title><style>
 :root{--bg:#071923;--p:#102936;--line:#254655;--txt:#edf7fa;--muted:#91abb7;--mint:#64e0c0;--warn:#ffc66d;--red:#ff8989}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 85% -10%,#174052 0,transparent 38%),var(--bg);color:var(--txt);font:14px/1.5 system-ui,sans-serif}.shell{max-width:1400px;margin:auto;padding:28px 22px 55px}.top,.head,.tools,.actions{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.top{margin-bottom:24px}.eyebrow{color:var(--mint);font-size:11px;letter-spacing:.15em;font-weight:800}h1{margin:3px 0;font-size:32px}h2{font-size:18px;margin:0}.muted{color:var(--muted)}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}.stat,.panel{background:linear-gradient(145deg,#153443,#0d232f);border:1px solid var(--line);border-radius:15px;padding:17px;box-shadow:0 10px 30px #0002}.stat strong{display:block;font-size:29px}.stat small{color:var(--muted)}.tabs{display:flex;gap:8px;margin-bottom:15px;flex-wrap:wrap}.tab,button{border:0;border-radius:9px;padding:10px 14px;background:var(--mint);color:#06232b;font-weight:800;cursor:pointer}.tab{background:#102936;color:#c5d8df;border:1px solid var(--line)}.tab.active{background:var(--mint);color:#06232b}.view{display:none}.view.active{display:block}.layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.8fr);gap:15px;align-items:start}.panel{margin-bottom:15px}.head{margin-bottom:14px}input,select,textarea{width:100%;min-width:0;background:#091f2a;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit}label{display:grid;gap:5px;color:#c4d7de;font-size:12px;flex:1;min-width:125px}[hidden]{display:none!important}.form{display:grid;gap:10px}.formrow{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.tablewrap{overflow:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th{text-align:left;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.1em;padding:10px;border-bottom:1px solid var(--line)}td{padding:11px 9px;border-bottom:1px solid #24425088}.badge{display:inline-block;border-radius:7px;padding:3px 7px;font-size:11px;font-weight:800;background:#1b3b49}.good{background:#16483e;color:#8ef0d3}.bad{background:#55343a;color:#ffb0b0}.warn{background:#55472e;color:#ffdc9c}.secondary{background:#1b3b49;color:#d8e8ed;border:1px solid var(--line)}.notice{color:var(--mint);font-size:12px;min-height:18px}.empty{text-align:center;color:var(--muted);padding:25px}.checks{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;max-height:200px;overflow:auto}.check{display:flex;gap:7px;align-items:center;background:#091f2a;padding:8px;border-radius:8px}.check input{width:auto}.modal{display:none;position:fixed;inset:0;background:#000b;place-items:center;padding:16px}.modal.open{display:grid}.modalbox{background:#102936;border:1px solid var(--line);border-radius:15px;padding:20px;width:min(650px,100%);max-height:90vh;overflow:auto}.event{border-left:2px solid #4b9d8d;padding:0 0 13px 12px;margin-left:6px}.event strong{display:block}.small{font-size:11px}@media(max-width:900px){.layout{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}}@media(max-width:600px){.shell{padding:18px 12px}.stats{grid-template-columns:repeat(2,1fr)}}
-.export-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 11px 18px;
-  border-radius: 9px;
-  background: var(--mint);
-  color: #06232b;
-  font-weight: 800;
-  text-decoration: none;
-  border: 1px solid var(--mint);
-}
-.export-btn:hover {
-  background: #a0f5df;
-  transform: translateY(-1px);
-}
-</style></head><body><main class="shell"><header class="top"><div><div class="eyebrow">DIVING CLUB / OPERATIONS</div><h1>Diving Club Manager</h1><div class="muted">Equipment, members and lending in one place.</div></div><a href="/api/export.xlsx" class="export-btn">
-↓ Export Excel backup </a>
-<span class="badge good">Local workspace</span></header>
+.export-btn{display:inline-flex;align-items:center;justify-content:center;padding:11px 18px;border-radius:9px;background:var(--mint);color:#06232b;font-weight:800;text-decoration:none;border:1px solid var(--mint)}
+.export-btn:hover{background:#a0f5df;transform:translateY(-1px)}
+</style></head><body><main class="shell"><header class="top"><div><div class="eyebrow">DIVING CLUB / OPERATIONS</div><h1>Diving Club Manager</h1><div class="muted">Equipment, members and lending in one place.</div></div><a href="/api/export.xlsx" class="export-btn">↓ Export Excel backup </a><span class="badge good">Local workspace</span></header>
 <section class="stats"><div class="stat"><small>Active members</small><strong>__MEMBERS__</strong></div><div class="stat"><small>Ready to borrow</small><strong>__READY__</strong></div><div class="stat"><small>Open item loans</small><strong>__LOANS__</strong></div><div class="stat"><small>Needs repair</small><strong>__REPAIR__</strong></div><div class="stat"><small>Total equipment</small><strong>__EQ__</strong></div></section>
 <nav class="tabs"><button class="tab active" data-view="equipment">Equipment</button><button class="tab" data-view="loans">Loans & returns</button><button class="tab" data-view="members">Members</button></nav>
 <section class="view active" id="equipment"><div class="layout"><article class="panel"><div class="head"><div><h2>Equipment inventory</h2><span class="muted small">Borrowing and condition are independent</span></div><div class="tools"><input id="eqsearch" placeholder="Search…" style="width:160px"><select id="eqfilter" style="width:150px"><option value="">All statuses</option><option value="available">Available</option><option value="checked_out">Borrowed</option><option value="needs_repair">Needs repair</option></select></div></div><div class="tablewrap"><table><thead><tr><th>Item</th><th>Category</th><th>Borrowing</th><th>Condition</th><th>Borrower</th><th></th></tr></thead><tbody id="eqrows"></tbody></table></div></article>
 <aside class="panel"><h2>Register equipment</h2><form id="eqform" class="form" style="margin-top:12px"><label>Name<input name="name" required></label><label>Category<select name="category_id" id="catselect"><option value="">No category</option></select></label><label>Brand<input name="brand" placeholder="e.g. Aqualung, Scubapro"></label><label id="regulatorfield" hidden>Regulator connection<select name="regulator_connection"><option value="">Not specified</option><option value="DIN">DIN</option><option value="ETRIER">Étrier</option></select></label><label id="sizefield" hidden>Size<input name="size" placeholder="e.g. XS, M, L, XL"></label><label>Serial number<input name="serial_number"></label><label>Description<textarea name="description" rows="2"></textarea></label><label>Comment<input name="comment" required value="New item registered"></label><button>Add equipment</button><div class="notice" id="eqnotice"></div></form><hr style="border:0;border-top:1px solid var(--line);margin:17px 0"><h2 style="font-size:15px">Add category</h2><form id="catform" class="formrow" style="margin-top:9px"><label>Name<input name="name" required placeholder="e.g. Regulators"></label><button>Add</button></form><div class="notice" id="catnotice"></div></aside></div></section>
 <section class="view" id="loans"><div class="layout"><article class="panel"><div class="head"><h2>Loan register</h2><select id="loanfilter" style="width:150px"><option value="open">Open loans</option><option value="all">All loans</option><option value="overdue">Overdue</option></select></div><div class="tablewrap"><table><thead><tr><th>Item</th><th>Member</th><th>Checked out</th><th>Due</th><th>Returned</th><th></th></tr></thead><tbody id="loanrows"></tbody></table></div></article><aside class="panel"><h2>Check out items</h2><form id="checkoutform" class="form" style="margin-top:12px"><label>Member<select name="member_id" id="memberselect" required><option value="">Choose member…</option></select></label><label>Items (select multiple)<div id="checkitems" class="checks"></div></label><label>Due date (optional)<input name="due_at" type="datetime-local"></label><label>Comment<input name="comment" required value="Equipment issued"></label><button>Check out selected items</button><div id="loannotice" class="notice"></div></form></aside></div></section>
-<section class="view" id="members"><div class="layout"><article class="panel"><div class="head"><h2>Member directory</h2><input id="msearch" placeholder="Search members…" style="max-width:190px"></div><div class="tablewrap"><table><thead><tr><th>Member</th><th>Level</th><th>Status</th></tr></thead><tbody id="mrows"></tbody></table></div></article><aside class="panel"><h2>Add member</h2><form id="mform" class="form" style="margin-top:12px"><label>Full name<input name="full_name" required></label><p class="muted small">Only the member name and diving qualification are stored. Contact details are not collected.</p><label>Diving level<select name="diving_level" required><option value="">Choose…</option>__LEVELS__</select></label><button>Add member</button><div class="notice" id="mnotice"></div></form></aside></div></section>
+<section class="view" id="members"><div class="layout"><article class="panel"><div class="head"><h2>Member directory</h2><input id="msearch" placeholder="Search members…" style="max-width:190px"></div><div class="tablewrap"><table><thead><tr><th>Member</th><th>Level</th><th>Status</th><th></th></tr></thead><tbody id="mrows"></tbody></table></div></article><aside class="panel"><h2>Add member</h2><form id="mform" class="form" style="margin-top:12px"><label>Full name<input name="full_name" required></label><p class="muted small">Only the member name and diving qualification are stored. Contact details are not collected.</p><label>Diving level<select name="diving_level" required><option value="">Choose…</option>__LEVELS__</select></label><button>Add member</button><div class="notice" id="mnotice"></div></form></aside></div></section>
 </main><div class="modal" id="modal"><div class="modalbox"><div class="head"><h2 id="modtitle">Equipment history</h2><button class="secondary" id="close">Close</button></div><div id="modbody"></div></div></div>
 <script>
 const levels=['N1','PN1','N2','PN2','N3','PN3','N4','PN4','E1','E2','E3','E4'];let eq=[],mem=[],loans=[],cats=[];const $=x=>document.getElementById(x);const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const dt=x=>x?new Date(x).toLocaleString():'—';async function api(url,o={}){let r=await fetch(url,{...o,headers:{'Content-Type':'application/json',...(o.headers||{})}});if(!r.ok)throw Error(await r.text());return r.status===204?null:r.json()}function msg(id,t){$(id).textContent=t}function updateEquipmentFields(){let opt=$('catselect').selectedOptions[0],name=(opt?.textContent||'').toLowerCase();let isReg=/regulator/.test(name),isSized=/\b(bcds?|buoyancy|wetsuits?|wet suits?|drysuits?|dry suits?)\b/.test(name);$('regulatorfield').hidden=!isReg;$('sizefield').hidden=!isSized;if(!isReg)$('eqform').elements.regulator_connection.value='';if(!isSized)$('eqform').elements.size.value=''}function borrow(s){return s==='checked_out'?'<span class="badge warn">Borrowed</span>':'<span class="badge good">Available</span>'}function cond(s){return s==='ready'?'<span class="badge good">Ready</span>':'<span class="badge bad">Needs repair</span>'}
-function renderEq(){let q=$('eqsearch').value.toLowerCase(),f=$('eqfilter').value;let a=eq.filter(x=>(x.name+' '+(x.brand||'')+' '+(x.size||'')+' '+(x.regulator_connection||'')+' '+(x.serial_number||'')+' '+(x.category_name||'')).toLowerCase().includes(q));if(f==='needs_repair')a=a.filter(x=>x.condition_status===f);else if(f)a=a.filter(x=>x.status===f);$('eqrows').innerHTML=a.map(x=>`<tr><td><b>${esc(x.name)}</b><div class="muted small">${esc(x.brand||'Brand not specified')}${x.regulator_connection?' · '+esc(x.regulator_connection==='ETRIER'?'Étrier':x.regulator_connection):''}${x.size?' · Size '+esc(x.size):''}</div><div class="muted small">${esc(x.serial_number||'No serial')} · QR ${x.qr_uuid.slice(0,8)}</div></td><td>${esc(x.category_name||'—')}</td><td>${borrow(x.status)}</td><td>${cond(x.condition_status)}</td><td>${esc(x.current_member_name||'—')}<div class="muted small">${x.due_at?'Due '+dt(x.due_at):''}</div></td><td><button class="secondary" onclick="detail('${x.id}')">History</button></td></tr>`).join('')||'<tr><td colspan="6" class="empty">No equipment found.</td></tr>';let available=eq.filter(x=>x.status==='available'&&x.condition_status==='ready');$('checkitems').innerHTML=available.map(x=>`<label class="check"><input type="checkbox" name="equipment_ids" value="${x.id}">${esc(x.name)} <span class="muted small">${esc(x.serial_number||'')}</span></label>`).join('')||'<span class="muted small">No ready equipment available.</span>'}
- function renderMem(){let q=$('msearch').value.toLowerCase();$('mrows').innerHTML=mem.filter(x=>x.full_name.toLowerCase().includes(q)).map(x=>`<tr><td><b>${esc(x.full_name)}</b></td><td><select class="lvl" data-id="${x.id}">${levels.map(l=>`<option ${x.diving_level===l?'selected':''}>${l}</option>`).join('')}</select></td><td>${x.active?'Active':'Inactive'}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">No members.</td></tr>'}
+
+function renderEq(){
+  let q=$('eqsearch').value.toLowerCase(),f=$('eqfilter').value;
+  let a=eq.filter(x=>(x.name+' '+(x.brand||'')+' '+(x.size||'')+' '+(x.regulator_connection||'')+' '+(x.serial_number||'')+' '+(x.category_name||'')).toLowerCase().includes(q));
+  if(f==='needs_repair')a=a.filter(x=>x.condition_status===f);
+  else if(f)a=a.filter(x=>x.status===f);
+  $('eqrows').innerHTML=a.map(x=>`
+    <tr>
+      <td>
+        <b>${esc(x.name)}</b>
+        <div class="muted small">${esc(x.brand||'Brand not specified')}${x.regulator_connection?' · '+esc(x.regulator_connection==='ETRIER'?'Étrier':x.regulator_connection):''}${x.size?' · Size '+esc(x.size):''}</div>
+        <div class="muted small">${esc(x.serial_number||'No serial')} · QR ${x.qr_uuid.slice(0,8)}</div>
+      </td>
+      <td>${esc(x.category_name||'—')}</td>
+      <td>${borrow(x.status)}</td>
+      <td>${cond(x.condition_status)}</td>
+      <td>${esc(x.current_member_name||'—')}<div class="muted small">${x.due_at?'Due '+dt(x.due_at):''}</div></td>
+      <td style="white-space:nowrap">
+        <button class="secondary" onclick="editEquipment('${x.id}')">Edit</button>
+        <button class="secondary" onclick="detail('${x.id}')">History</button>
+      </td>
+    </tr>`).join('')||'<tr><td colspan="6" class="empty">No equipment found.</td></tr>';
+  let available=eq.filter(x=>x.status==='available'&&x.condition_status==='ready');
+  $('checkitems').innerHTML=available.map(x=>`<label class="check"><input type="checkbox" name="equipment_ids" value="${x.id}">${esc(x.name)} <span class="muted small">${esc(x.serial_number||'')}</span></label>`).join('')||'<span class="muted small">No ready equipment available.</span>';
+}
+
+function renderMem(){
+  let q=$('msearch').value.toLowerCase();
+  $('mrows').innerHTML=mem.filter(x=>x.full_name.toLowerCase().includes(q)).map(x=>`
+    <tr>
+      <td><b>${esc(x.full_name)}</b></td>
+      <td><select class="lvl" data-id="${x.id}">${levels.map(l=>`<option ${x.diving_level===l?'selected':''}>${l}</option>`).join('')}</select></td>
+      <td>${x.active?'Active':'Inactive'}</td>
+      <td><button class="secondary" onclick="editMember('${x.id}')">Edit</button></td>
+    </tr>`).join('')||'<tr><td colspan="4" class="empty">No members.</td></tr>';
+}
+
 function renderLoans(){let f=$('loanfilter').value,now=Date.now();let a=loans.filter(x=>f==='all'||(f==='open'&&!x.returned_at)||(f==='overdue'&&!x.returned_at&&x.due_at&&new Date(x.due_at).getTime()<now));$('loanrows').innerHTML=a.map(x=>`<tr><td>${esc(x.equipment_name)}<div class="muted small">Group ${x.loan_group_id.slice(0,8)}</div></td><td>${esc(x.member_name)}</td><td>${dt(x.checked_out_at)}</td><td>${dt(x.due_at)}${!x.returned_at&&x.due_at&&new Date(x.due_at)<new Date()?' <span class="badge bad">Overdue</span>':''}</td><td>${dt(x.returned_at)}</td><td>${x.returned_at?'':`<button onclick="returnItem('${x.id}')">Return</button>`}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">No loans found.</td></tr>'}
+
 async function refresh(){[eq,mem,loans,cats]=await Promise.all([api('/api/equipment'),api('/api/members'),api('/api/loans'),api('/api/categories')]);renderEq();renderMem();renderLoans();$('catselect').innerHTML='<option value="">No category</option>'+cats.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');updateEquipmentFields();$('memberselect').innerHTML='<option value="">Choose member…</option>'+mem.filter(x=>x.active).map(x=>`<option value="${x.id}">${esc(x.full_name)} (${esc(x.diving_level||'No level')})</option>`).join('')}
-document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.view).classList.add('active')});$('eqsearch').oninput=renderEq;$('eqfilter').onchange=renderEq;$('catselect').onchange=updateEquipmentFields;$('msearch').oninput=renderMem;$('loanfilter').onchange=renderLoans;
+
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab,.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');$(b.dataset.view).classList.add('active')});
+$('eqsearch').oninput=renderEq;
+$('eqfilter').onchange=renderEq;
+$('catselect').onchange=updateEquipmentFields;
+$('msearch').oninput=renderMem;
+$('loanfilter').onchange=renderLoans;
+
 $('eqform').onsubmit=async e=>{e.preventDefault();let p=Object.fromEntries(new FormData(e.target));p.category_id=p.category_id||null;p.brand=p.brand||null;p.regulator_connection=p.regulator_connection||null;p.size=p.size||null;p.description=p.description||null;p.serial_number=p.serial_number||null;try{await api('/api/equipment',{method:'POST',body:JSON.stringify(p)});e.target.reset();msg('eqnotice','Equipment registered.');await refresh()}catch(x){msg('eqnotice',x.message)}};
 $('catform').onsubmit=async e=>{e.preventDefault();try{await api('/api/categories',{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(e.target)))});e.target.reset();msg('catnotice','Category added.');await refresh()}catch(x){msg('catnotice',x.message)}};
 $('mform').onsubmit=async e=>{e.preventDefault();let p=Object.fromEntries(new FormData(e.target));try{await api('/api/members',{method:'POST',body:JSON.stringify(p)});e.target.reset();msg('mnotice','Member added.');await refresh()}catch(x){msg('mnotice',x.message)}};
 $('mrows').onchange=async e=>{if(!e.target.matches('.lvl'))return;try{await api('/api/members/'+e.target.dataset.id,{method:'PATCH',body:JSON.stringify({diving_level:e.target.value})});let m=mem.find(x=>x.id===e.target.dataset.id);if(m)m.diving_level=e.target.value}catch(x){alert(x.message)}};
 $('checkoutform').onsubmit=async e=>{e.preventDefault();let f=new FormData(e.target),ids=f.getAll('equipment_ids');if(!ids.length){msg('loannotice','Select at least one item.');return}let due=f.get('due_at');let p={member_id:f.get('member_id'),equipment_ids:ids,due_at:due?new Date(due).toISOString():null,comment:f.get('comment')};try{let r=await api('/api/loans',{method:'POST',body:JSON.stringify(p)});msg('loannotice',r.loans.length+' item(s) checked out. Group '+r.loan_group_id.slice(0,8));e.target.reset();await refresh()}catch(x){msg('loannotice',x.message)}};
 window.returnItem=async id=>{let comment=prompt('Return comment (required):','Returned; condition inspected.');if(comment===null)return;let c=prompt('Condition after return: ready or needs_repair','ready');if(c===null)return;try{await api('/api/loans/'+id+'/return',{method:'POST',body:JSON.stringify({comment,condition_status:c})});await refresh()}catch(x){alert(x.message)}};
-window.detail=async id=>{try{let [x,events]=await Promise.all([api('/api/equipment/'+id),api('/api/equipment/'+id+'/history')]);$('modtitle').textContent=x.name+' — history';$('modbody').innerHTML=`<p>${borrow(x.status)} ${cond(x.condition_status)}</p><p class="muted small">Brand ${esc(x.brand||'—')} · ${esc(x.regulator_connection==='ETRIER'?'Étrier':x.regulator_connection||'Connection n/a')} · Size ${esc(x.size||'—')}<br>Serial ${esc(x.serial_number||'—')} · QR DCM:${esc(x.qr_uuid)}</p><div class="form"><label>Condition<select id="newcond"><option value="ready" ${x.condition_status==='ready'?'selected':''}>Ready to use</option><option value="needs_repair" ${x.condition_status==='needs_repair'?'selected':''}>Needs repair</option></select></label><label>Comment (required)<textarea id="condcomment" rows="2" placeholder="Describe inspection, damage or repair"></textarea></label><button id="savecond">Save condition and comment</button></div><hr style="border:0;border-top:1px solid var(--line);margin:16px 0"><h3>Event timeline</h3>${events.map(v=>`<div class="event"><b>${esc(v.event_type.replaceAll('_',' '))}</b><span class="muted small">${dt(v.occurred_at)}</span><div>${esc(v.comment)}</div></div>`).join('')||'<p class="muted">No history yet.</p>'}`;$('modal').classList.add('open');$('savecond').onclick=async()=>{try{await api('/api/equipment/'+id+'/condition',{method:'PATCH',body:JSON.stringify({condition_status:$('newcond').value,comment:$('condcomment').value})});await refresh();await detail(id)}catch(e){alert(e.message)}}}catch(e){alert(e.message)}};$('close').onclick=()=>$('modal').classList.remove('open');refresh().catch(e=>alert('Unable to load application: '+e.message));
+window.detail=async id=>{try{let [x,events]=await Promise.all([api('/api/equipment/'+id),api('/api/equipment/'+id+'/history')]);$('modtitle').textContent=x.name+' — history';$('modbody').innerHTML=`<p>${borrow(x.status)} ${cond(x.condition_status)}</p><p class="muted small">Brand ${esc(x.brand||'—')} · ${esc(x.regulator_connection==='ETRIER'?'Étrier':x.regulator_connection||'Connection n/a')} · Size ${esc(x.size||'—')}<br>Serial ${esc(x.serial_number||'—')} · QR DCM:${esc(x.qr_uuid)}</p><div class="form"><label>Condition<select id="newcond"><option value="ready" ${x.condition_status==='ready'?'selected':''}>Ready to use</option><option value="needs_repair" ${x.condition_status==='needs_repair'?'selected':''}>Needs repair</option></select></label><label>Comment (required)<textarea id="condcomment" rows="2" placeholder="Describe inspection, damage or repair"></textarea></label><button id="savecond">Save condition and comment</button></div><hr style="border:0;border-top:1px solid var(--line);margin:16px 0"><h3>Event timeline</h3>${events.map(v=>`<div class="event"><b>${esc(v.event_type.replaceAll('_',' '))}</b><span class="muted small">${dt(v.occurred_at)}</span><div>${esc(v.comment)}</div></div>`).join('')||'<p class="muted">No history yet.</p>'}`;$('modal').classList.add('open');$('savecond').onclick=async()=>{try{await api('/api/equipment/'+id+'/condition',{method:'PATCH',body:JSON.stringify({condition_status:$('newcond').value,comment:$('condcomment').value})});await refresh();await detail(id)}catch(e){alert(e.message)}}}catch(e){alert(e.message)}};
+$('close').onclick=()=>$('modal').classList.remove('open');
+
+window.closeModal=()=>$('modal').classList.remove('open');
+
+window.editEquipment=async id=>{
+  const x=eq.find(e=>e.id===id);
+  if(!x)return alert('Equipment not found');
+  $('modtitle').textContent='Edit equipment';
+  $('modbody').innerHTML=`
+    <form id="eqeditform" class="form">
+      <label>Name<input name="name" required maxlength="160" value="${esc(x.name)}"></label>
+      <label>Category<select name="category_id" id="editcatselect">
+        <option value="">No category</option>
+        ${cats.map(c=>`<option value="${c.id}" ${x.category_id===c.id?'selected':''}>${esc(c.name)}</option>`).join('')}
+      </select></label>
+      <label>Brand<input name="brand" maxlength="120" value="${esc(x.brand||'')}"></label>
+      <label id="editregulatorfield" hidden>Regulator connection
+        <select name="regulator_connection">
+          <option value="">Not specified</option>
+          <option value="DIN" ${x.regulator_connection==='DIN'?'selected':''}>DIN</option>
+          <option value="ETRIER" ${x.regulator_connection==='ETRIER'?'selected':''}>Étrier</option>
+        </select>
+      </label>
+      <label id="editsizefield" hidden>Size<input name="size" maxlength="40" value="${esc(x.size||'')}"></label>
+      <label>Serial number<input name="serial_number" value="${esc(x.serial_number||'')}"></label>
+      <label>Description<textarea name="description" rows="2">${esc(x.description||'')}</textarea></label>
+      <label>Comment (required, recorded in history)
+        <input name="comment" required value="Details updated" maxlength="2000"></label>
+      <div class="actions">
+        <button>Save changes</button>
+        <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+      </div>
+      <div class="notice" id="eqeditnotice"></div>
+    </form>`;
+  $('modal').classList.add('open');
+  const cat=$('editcatselect');
+  const toggle=clear=>{
+    const opt=cat.selectedOptions[0],name=(opt?.textContent||'').toLowerCase();
+    const isReg=/regulator/.test(name);
+    const isSized=/\b(bcds?|buoyancy|wetsuits?|wet suits?|drysuits?|dry suits?)\b/.test(name);
+    $('editregulatorfield').hidden=!isReg;
+    $('editsizefield').hidden=!isSized;
+    if(clear&&!isReg)$('editregulatorfield').querySelector('select').value='';
+    if(clear&&!isSized)$('editsizefield').querySelector('input').value='';
+  };
+  cat.onchange=()=>toggle(true);
+  toggle(false);
+  $('eqeditform').onsubmit=async e=>{
+    e.preventDefault();
+    const p=Object.fromEntries(new FormData(e.target));
+    p.category_id=p.category_id||null;
+    p.brand=p.brand||null;
+    p.regulator_connection=p.regulator_connection||null;
+    p.size=p.size||null;
+    p.description=p.description||null;
+    p.serial_number=p.serial_number||null;
+    try{
+      await api('/api/equipment/'+id,{method:'PUT',body:JSON.stringify(p)});
+      closeModal();
+      await refresh();
+    }catch(err){$('eqeditnotice').textContent=err.message}
+  };
+};
+
+window.editMember=async id=>{
+  const m=mem.find(x=>x.id===id);
+  if(!m)return alert('Member not found');
+  $('modtitle').textContent='Edit member';
+  $('modbody').innerHTML=`
+    <form id="memeditform" class="form">
+      <label>Full name<input name="full_name" required maxlength="160" value="${esc(m.full_name)}"></label>
+      <label>Diving level<select name="diving_level" required>
+        ${levels.map(l=>`<option ${m.diving_level===l?'selected':''}>${l}</option>`).join('')}
+      </select></label>
+      <label class="check" style="display:flex;gap:8px;align-items:center">
+        <input type="checkbox" name="active" ${m.active?'checked':''} style="width:auto"> Active member
+      </label>
+      <div class="actions">
+        <button>Save changes</button>
+        <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+      </div>
+      <div class="notice" id="memeditnotice"></div>
+    </form>`;
+  $('modal').classList.add('open');
+  $('memeditform').onsubmit=async e=>{
+    e.preventDefault();
+    const f=new FormData(e.target);
+    const p={full_name:f.get('full_name'),diving_level:f.get('diving_level'),active:f.get('active')==='on'};
+    try{
+      await api('/api/members/'+id,{method:'PATCH',body:JSON.stringify(p)});
+      closeModal();
+      await refresh();
+    }catch(err){$('memeditnotice').textContent=err.message}
+  };
+};
+
+refresh().catch(e=>alert('Unable to load application: '+e.message));
 </script></body></html>"###;
  let html=html.replace("__MEMBERS__",&members.to_string()).replace("__READY__",&ready.to_string()).replace("__LOANS__",&loans.to_string()).replace("__REPAIR__",&repair.to_string()).replace("__EQ__",&eq.to_string()).replace("__LEVELS__",&levels);
  Ok(Html(html))
@@ -88,9 +231,129 @@ pub async fn equipment_history(State(s):State<AppState>,Path(id):Path<Uuid>)->Re
 pub async fn change_condition(State(s):State<AppState>,Path(id):Path<Uuid>,Json(i):Json<ConditionRequest>)->Result<Json<Equipment>,AppError>{check_comment(&i.comment)?;if !["ready","needs_repair"].contains(&i.condition_status.as_str()){return Err(AppError::BadRequest("condition_status must be ready or needs_repair".into()))}let mut tx=s.db.begin().await?;let old:Option<String>=sqlx::query_scalar("SELECT condition_status FROM equipment WHERE id=$1 FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?;let old=old.ok_or(AppError::NotFound)?;let typ=if i.condition_status=="ready"{"maintenance_completed"}else{"maintenance_reported"};sqlx::query("UPDATE equipment SET condition_status=$1,updated_at=now() WHERE id=$2").bind(&i.condition_status).bind(id).execute(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,event_type,from_state,to_state,comment) VALUES($1,$2,jsonb_build_object('condition_status',$3),jsonb_build_object('condition_status',$4),$5)").bind(id).bind(typ).bind(old).bind(&i.condition_status).bind(i.comment.trim()).execute(&mut *tx).await?;tx.commit().await?;Ok(Json(sqlx::query_as::<_,Equipment>(&format!("{EQ_SELECT} WHERE e.id=$1")).bind(id).fetch_one(&s.db).await?))}
 pub async fn list_members(State(s):State<AppState>)->Result<Json<Vec<Member>>,AppError>{Ok(Json(sqlx::query_as::<_,Member>("SELECT id,full_name,diving_level,active,created_at FROM members ORDER BY full_name").fetch_all(&s.db).await?))}
 pub async fn create_member(State(s):State<AppState>,Json(i):Json<NewMember>)->Result<(StatusCode,Json<Member>),AppError>{i.validate().map_err(|e|AppError::BadRequest(e.to_string()))?;if !LEVELS.contains(&i.diving_level.as_str()){return Err(AppError::BadRequest("Invalid diving_level".into()))}let row=sqlx::query_as::<_,Member>("INSERT INTO members(full_name,diving_level) VALUES($1,$2) RETURNING id,full_name,diving_level,active,created_at").bind(i.full_name.trim()).bind(i.diving_level).fetch_one(&s.db).await?;Ok((StatusCode::CREATED,Json(row)))}
-pub async fn update_member_level(State(s):State<AppState>,Path(id):Path<Uuid>,Json(i):Json<UpdateMemberLevel>)->Result<Json<Member>,AppError>{if !LEVELS.contains(&i.diving_level.as_str()){return Err(AppError::BadRequest("Invalid diving_level".into()))}Ok(Json(sqlx::query_as::<_,Member>("UPDATE members SET diving_level=$1 WHERE id=$2 RETURNING id,full_name,diving_level,active,created_at").bind(i.diving_level).bind(id).fetch_optional(&s.db).await?.ok_or(AppError::NotFound)?))}
+pub async fn update_member(
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(i): Json<UpdateMember>,
+) -> Result<Json<Member>, AppError> {
+    let name_clean = match i.full_name.as_deref() {
+        Some(raw) => {
+            let t = raw.trim();
+            if t.is_empty() || t.len() > 160 {
+                return Err(AppError::BadRequest(
+                    "full_name must be 1-160 characters".into(),
+                ));
+            }
+            Some(t)
+        }
+        None => None,
+    };
+    if let Some(level) = i.diving_level.as_deref() {
+        if !LEVELS.contains(&level) {
+            return Err(AppError::BadRequest("Invalid diving_level".into()));
+        }
+    }
+
+    Ok(Json(
+        sqlx::query_as::<_, Member>(
+            "UPDATE members SET \
+                full_name   = COALESCE($1, full_name), \
+                diving_level = COALESCE($2, diving_level), \
+                active      = COALESCE($3, active) \
+             WHERE id=$4 \
+             RETURNING id, full_name, diving_level, active, created_at",
+        )
+        .bind(name_clean)
+        .bind(i.diving_level.as_deref())
+        .bind(i.active)
+        .bind(id)
+        .fetch_optional(&s.db)
+        .await?
+        .ok_or(AppError::NotFound)?,
+    ))
+}
 pub async fn list_loans(State(s):State<AppState>)->Result<Json<Vec<Loan>>,AppError>{Ok(Json(sqlx::query_as::<_,Loan>(&format!("{LOAN_SELECT} ORDER BY l.checked_out_at DESC")).fetch_all(&s.db).await?))}
 pub async fn checkout(State(s):State<AppState>,Json(i):Json<CheckoutRequest>)->Result<(StatusCode,Json<serde_json::Value>),AppError>{let mut ids=i.equipment_ids.unwrap_or_default();if let Some(id)=i.equipment_id{ids.push(id)}ids.sort();ids.dedup();if ids.is_empty(){return Err(AppError::BadRequest("Select at least one equipment item".into()))}if ids.len()>50{return Err(AppError::BadRequest("A checkout can contain at most 50 items".into()))}let comment=i.comment.as_deref().or(i.notes.as_deref()).unwrap_or("Equipment checked out");check_comment(comment)?;let mut tx=s.db.begin().await?;let active:Option<bool>=sqlx::query_scalar("SELECT active FROM members WHERE id=$1").bind(i.member_id).fetch_optional(&mut *tx).await?;if active!=Some(true){return Err(AppError::BadRequest("Member does not exist or is inactive".into()))}let group=Uuid::new_v4();let mut ids_created=Vec::new();for eid in ids{let state:Option<(String,String)>=sqlx::query_as("SELECT status,condition_status FROM equipment WHERE id=$1 FOR UPDATE").bind(eid).fetch_optional(&mut *tx).await?;let (borrow,condition)=state.ok_or(AppError::NotFound)?;if borrow!="available"{return Err(AppError::Conflict(format!("Equipment {eid} is already borrowed")))}if condition!="ready"{return Err(AppError::Conflict(format!("Equipment {eid} needs repair and cannot be borrowed")))}let lid:Uuid=sqlx::query_scalar("INSERT INTO loans(loan_group_id,equipment_id,member_id,due_at,notes) VALUES($1,$2,$3,$4,$5) RETURNING id").bind(group).bind(eid).bind(i.member_id).bind(i.due_at).bind(i.notes.as_deref()).fetch_one(&mut *tx).await?;sqlx::query("UPDATE equipment SET status='checked_out',updated_at=now() WHERE id=$1").bind(eid).execute(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,loan_id,event_type,from_state,to_state,comment) VALUES($1,$2,'checked_out',jsonb_build_object('status','available'),jsonb_build_object('status','checked_out','member_id',$3),$4)").bind(eid).bind(lid).bind(i.member_id).bind(comment.trim()).execute(&mut *tx).await?;ids_created.push(lid)}tx.commit().await?;let mut result=Vec::new();for lid in ids_created{result.push(sqlx::query_as::<_,Loan>(&format!("{LOAN_SELECT} WHERE l.id=$1")).bind(lid).fetch_one(&s.db).await?)}Ok((StatusCode::CREATED,Json(serde_json::json!({"loan_group_id":group,"loans":result}))))}
 pub async fn return_equipment(State(s):State<AppState>,Path(id):Path<Uuid>,body:Option<Json<ReturnRequest>>)->Result<Json<Loan>,AppError>{let i=body.map(|Json(v)|v).unwrap_or_default();let comment=i.comment.as_deref().unwrap_or("Returned; condition retained pending inspection");check_comment(comment)?;if let Some(c)=&i.condition_status{if !["ready","needs_repair"].contains(&c.as_str()){return Err(AppError::BadRequest("condition_status must be ready or needs_repair".into()))}}let mut tx=s.db.begin().await?;let row:Option<(Uuid,String)>=sqlx::query_as("SELECT l.equipment_id,e.condition_status FROM loans l JOIN equipment e ON e.id=l.equipment_id WHERE l.id=$1 AND l.returned_at IS NULL FOR UPDATE OF l,e").bind(id).fetch_optional(&mut *tx).await?;let (eid,old)=row.ok_or(AppError::NotFound)?;let new=i.condition_status.as_deref().unwrap_or(&old);sqlx::query("UPDATE loans SET returned_at=now() WHERE id=$1").bind(id).execute(&mut *tx).await?;sqlx::query("UPDATE equipment SET status='available',condition_status=$1,updated_at=now() WHERE id=$2").bind(new).bind(eid).execute(&mut *tx).await?;sqlx::query("INSERT INTO equipment_events(equipment_id,loan_id,event_type,from_state,to_state,comment) VALUES($1,$2,'returned',jsonb_build_object('status','checked_out','condition_status',$3),jsonb_build_object('status','available','condition_status',$4),$5)").bind(eid).bind(id).bind(&old).bind(new).bind(comment.trim()).execute(&mut *tx).await?;tx.commit().await?;Ok(Json(sqlx::query_as::<_,Loan>(&format!("{LOAN_SELECT} WHERE l.id=$1")).bind(id).fetch_one(&s.db).await?))}
+
+pub async fn update_equipment(
+    State(s): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(i): Json<UpdateEquipment>,
+) -> Result<Json<Equipment>, AppError> {
+    i.validate().map_err(|e| AppError::BadRequest(e.to_string()))?;
+    if let Some(connection) = i.regulator_connection.as_deref() {
+        if !["DIN", "ETRIER"].contains(&connection) {
+            return Err(AppError::BadRequest(
+                "regulator_connection must be DIN or ETRIER".into(),
+            ));
+        }
+    }
+    let comment = i.comment.as_deref().unwrap_or("Equipment details updated");
+    check_comment(comment)?;
+
+    let mut tx = s.db.begin().await?;
+
+    // Snapshot old values for the audit event (and to 404 cleanly).
+    let old: Option<(String, Option<Uuid>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT name, category_id, brand, regulator_connection, size, description, serial_number \
+             FROM equipment WHERE id=$1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let (old_name, old_cat, old_brand, old_conn, old_size, old_desc, old_serial) =
+        old.ok_or(AppError::NotFound)?;
+
+    sqlx::query(
+        "UPDATE equipment SET name=$1, category_id=$2, brand=$3, regulator_connection=$4, \
+                            size=$5, description=$6, serial_number=$7, updated_at=now() \
+         WHERE id=$8",
+    )
+    .bind(i.name.trim())
+    .bind(i.category_id)
+    .bind(i.brand.as_deref().map(str::trim).filter(|v| !v.is_empty()))
+    .bind(i.regulator_connection.as_deref())
+    .bind(i.size.as_deref().map(str::trim).filter(|v| !v.is_empty()))
+    .bind(i.description.as_deref())        // <-- was i.description
+    .bind(i.serial_number.as_deref())      // <-- was i.serial_number
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO equipment_events(equipment_id,event_type,from_state,to_state,comment) \
+         VALUES($1,'note', \
+                jsonb_build_object('name',$2,'category_id',$3,'brand',$4, \
+                                   'regulator_connection',$5,'size',$6,'description',$7, \
+                                   'serial_number',$8), \
+                jsonb_build_object('name',$9,'category_id',$10,'brand',$11, \
+                                   'regulator_connection',$12,'size',$13,'description',$14, \
+                                   'serial_number',$15), \
+                $16)",
+    )
+    .bind(id)
+    .bind(&old_name).bind(old_cat).bind(&old_brand).bind(&old_conn)
+    .bind(&old_size).bind(&old_desc).bind(&old_serial)
+    .bind(i.name.trim()).bind(i.category_id)
+    .bind(i.brand.as_deref().map(str::trim).filter(|v| !v.is_empty()))
+    .bind(i.regulator_connection.as_deref())
+    .bind(i.size.as_deref().map(str::trim).filter(|v| !v.is_empty()))
+    .bind(i.description.as_deref())        // <-- was i.description
+    .bind(i.serial_number.as_deref())      // <-- was i.serial_number
+    .bind(comment.trim())
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Json(
+        sqlx::query_as::<_, Equipment>(&format!("{EQ_SELECT} WHERE e.id=$1"))
+            .bind(id)
+            .fetch_one(&s.db)
+            .await?,
+    ))
+}
 
 #[cfg(test)] mod tests {use super::*;#[test]fn allowed_levels_are_fixed(){assert_eq!(LEVELS.len(),12);assert!(!LEVELS.contains(&"N5"));}#[test]fn qr_prefix_is_stable(){assert_eq!(format!("DCM:{}",Uuid::nil()),"DCM:00000000-0000-0000-0000-000000000000");}}
