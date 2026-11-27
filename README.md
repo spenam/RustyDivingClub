@@ -20,9 +20,9 @@ Diving Club Manager brings these activities together in a single application, he
 
 ## ✨ Features
 
-### 👥 Privacy-minimised member management
-- No member email address, phone number or home address is stored by the application.
-- Record diving qualifications and certification levels.
+### 👥 Member management
+- Keep track of members by their real names.
+- Store diving qualifications without collecting email addresses or phone numbers.
 - Record diving qualifications and certification levels.
 - Support qualification levels:
   - N1, PN1, N2, PN2
@@ -76,24 +76,22 @@ Diving Club Manager brings these activities together in a single application, he
 
 ## 🔐 Privacy and deployment security
 
-This application is designed to minimise stored member data. Member records use generated club codes rather than names or contact details. The Excel export omits member, contact details, loan notes and free-text equipment-history comments.
+The application retains members' names and internal UUIDs because they are needed for club operations. It does **not** collect or store member email addresses or phone numbers after migration `0004_member_contact_privacy.sql` has been applied. Home addresses and dates of birth are not part of the member form.
 
-**Important limitations:**
-- Free-text comments entered into the application may still contain personal information. Do not enter contact details, medical information or other sensitive details in comments.
-- Existing database backups, old exports, Docker volumes and application logs are not erased by the migration.
-- This version does **not** implement user authentication or role-based access. Do not expose it directly to the public internet until authentication, authorisation, rate limiting and a security review have been completed.
+The Excel export includes member names but excludes email addresses, phone numbers, loan free-text notes and equipment-history comments. Free-text comments entered in the application can still contain personal information, so do not put contact details, medical information or other sensitive data in comments.
+
+**Public deployment warning:** this version does not provide authentication or role-based access. Do not expose it directly to the public internet. Add authentication and authorization, put the app behind an HTTPS reverse proxy, and restrict access before sharing a public URL. PostgreSQL should remain on the private Docker network and must not have a public port.
 
 Deployment safeguards:
-- Keep PostgreSQL on the private Docker network; do not publish its port.
-- The application port is bound to `127.0.0.1` so a host reverse proxy can connect without exposing the container port directly.
-- Put a properly configured HTTPS reverse proxy in front of the application.
-- Set a unique, strong `POSTGRES_PASSWORD` in an untracked `.env` file.
-- Restrict access to backups and remove old backups/exports securely when no longer needed.
-- Set `RUST_LOG=warn` in production and avoid adding personal data to request paths or comments.
+- Copy `.env.example` to `.env` and set a unique, long `POSTGRES_PASSWORD`.
+- Never commit `.env`, database dumps or exported workbooks.
+- The app port is bound to `127.0.0.1:8080` for access through a host reverse proxy.
+- Keep database backups private and remove old backups and exports securely when no longer needed.
+- Use `RUST_LOG=warn` in production and avoid logging request bodies or personal data.
 
-### Existing installations and data removal
+### Existing installations
 
-Migration `0004_member_privacy.sql` replaces stored member contact fields with generated member codes and drops the old columns. **This is destructive and cannot be undone from the database after it runs.** Before upgrading, take a protected backup, then decide whether that backup itself must be securely deleted after the migration. Old backups may still contain the original personal data.
+The new migration drops only the `email` and `phone` columns. It preserves member names, member UUIDs, diving levels, equipment and loan relationships. Take a protected backup before upgrading. The migration is destructive for those contact columns; if you need them for any lawful reason, export and protect them separately before applying it.
 
 ## 🚀 Getting started
 
@@ -115,7 +113,7 @@ cd REPOSITORY
 
 Check the project's Docker Compose configuration and `.env` requirements.
 
-Copy `.env.example` to `.env` and replace the placeholder with a long, unique password. Keep `.env` private and never commit it.
+Copy `.env.example` to `.env` and replace the placeholder with a long, unique password. Keep `.env` private.
 
 **Never commit passwords, database credentials or other secrets to GitHub.**
 
@@ -129,7 +127,7 @@ docker compose up --build -d
 
 Visit:
 
-**http://localhost:8080** (available on the host; use a private reverse proxy for remote access).
+**http://localhost:8080**
 
 To follow application logs:
 
