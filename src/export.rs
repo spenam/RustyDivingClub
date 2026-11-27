@@ -70,10 +70,10 @@ pub async fn export_workbook(db: &PgPool) -> Result<Response, AppError> {
 
     let equipment = json_rows(db, r#"
         SELECT jsonb_build_array(e.id::text, e.qr_uuid::text, e.category_id::text,
-            c.name, e.name, e.description, e.serial_number, e.status,
-            e.condition_status, e.created_at::text, e.updated_at::text,
-            l.member_id::text, m.full_name, l.checked_out_at::text,
-            l.due_at::text) AS data
+            c.name, e.name, e.brand, e.regulator_connection, e.size,
+            e.description, e.serial_number, e.status, e.condition_status,
+            e.created_at::text, e.updated_at::text, l.member_id::text,
+            m.full_name, l.checked_out_at::text, l.due_at::text) AS data
         FROM equipment e
         LEFT JOIN equipment_categories c ON c.id=e.category_id
         LEFT JOIN loans l ON l.equipment_id=e.id AND l.returned_at IS NULL
@@ -81,10 +81,11 @@ pub async fn export_workbook(db: &PgPool) -> Result<Response, AppError> {
         ORDER BY e.name, e.id
     "#).await?;
     add_sheet(&mut workbook, "Equipment",
-        &["equipment_id","qr_uuid","category_id","category_name","name",
-          "description","serial_number","borrowing_status","condition_status",
-          "created_at","updated_at","current_member_id","current_member_name",
-          "current_checked_out_at","current_due_at"], equipment)?;
+        &["equipment_id","qr_uuid","category_id","category_name","name","brand",
+          "regulator_connection","size","description","serial_number",
+          "borrowing_status","condition_status","created_at","updated_at",
+          "current_member_id","current_member_name","current_checked_out_at",
+          "current_due_at"], equipment)?;
 
     let loans = json_rows(db, r#"
         SELECT jsonb_build_array(l.id::text, l.loan_group_id::text,
@@ -115,7 +116,7 @@ pub async fn export_workbook(db: &PgPool) -> Result<Response, AppError> {
         &["field","value"],
         vec![
             vec!["format".into(), "Diving Club Manager workbook backup".into()],
-            vec!["format_version".into(), "1".into()],
+            vec!["format_version".into(), "2".into()],
             vec!["exported_at_utc".into(), exported_at],
             vec!["record_ids".into(), "UUIDs are stable identifiers; keep them unchanged for future import".into()],
             vec!["import_policy".into(), "Future imports should be validated and previewed before applying; this workbook is not a direct database restore file".into()],
